@@ -64,7 +64,7 @@ export const ITEMS: Record<string, ItemDef> = {
   pickaxe: { id: 'pickaxe', name: 'Pickaxe', category: 'tool', stack: 1, durability: 90, tool: { kind: 'pickaxe', damage: 18 }, description: 'Scrap-metal pick. Breaks rock faster, pries metal from stone, clears rockfalls.' },
   torch: { id: 'torch', name: 'Torch', category: 'light', stack: 3, durability: 300, damage: 10, light: { radius: 9, intensity: 2.2, color: 0xffa04a }, description: 'Burns for about five minutes once lit. Wolves keep their distance. Rain shortens its life.' },
   lantern: { id: 'lantern', name: 'Lantern', category: 'light', stack: 1, durability: 600, light: { radius: 12, intensity: 2.6, color: 0xffc070, fuelItem: 'fuel' }, description: 'A storm lantern. Wide, steady light that rain can’t put out. Refuels from lamp oil; press F to switch on or off.' },
-  parka: { id: 'parka', name: 'Hide Parka', category: 'clothing', stack: 1, warmth: 22, description: 'Stitched hide over a cloth lining. Keeps out the worst of the cold. Equip with F.' },
+  parka: { id: 'parka', name: 'Hide Parka', category: 'clothing', stack: 1, warmth: 30, description: 'Stitched hide over a cloth lining. Keeps out the worst of the cold. Equip with F.' },
   campfire: { id: 'campfire', name: 'Campfire', category: 'placeable', stack: 5, piece: 'campfire', description: 'A stone ring and kindling. Place it in build mode (B), then light it.' },
   floor: { id: 'floor', name: 'Wooden Floor', category: 'placeable', stack: 10, piece: 'floor', description: 'A plank floor section, two metres wide.' },
   wall: { id: 'wall', name: 'Wooden Wall', category: 'placeable', stack: 10, piece: 'wall', description: 'A solid wall that blocks wind and wildlife.' },

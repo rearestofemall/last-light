@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { worldUvBox } from '../../render/textures';
+import { paintedPlankTexture, worldUvBox } from '../../render/textures';
 import { fadeMaterial, type Fadeable, mesh, oneway, type SiteContext, type SiteMaterials, solid } from './kit';
 
 export type HouseStyle = 'timber' | 'cottage' | 'brick' | 'concrete' | 'station' | 'hut';
@@ -19,6 +19,8 @@ export interface CabinSpec {
   ground?: number;
   /** Omit the doorway on one side (e.g. tower against a cliff). */
   noDoor?: 'left' | 'right';
+  /** Painted bands across the facade every other storey (lighthouse). */
+  bands?: THREE.MeshStandardMaterial;
 }
 
 export interface CabinResult {
@@ -47,9 +49,13 @@ function styleMats(mats: SiteMaterials, style: HouseStyle) {
     return n;
   };
   switch (style) {
-    case 'cottage':
-      s = { wall: tint(mats.wood, 0xf2ece0), trim: tint(mats.woodDark, 0x6a7f8c), roof: tint(mats.roof, 0xa89488) };
+    case 'cottage': {
+      const painted = mats.wood.clone();
+      painted.map = paintedPlankTexture();
+      painted.color.setHex(0xffffff);
+      s = { wall: painted, trim: tint(mats.woodDark, 0x5f7684), roof: tint(mats.roof, 0xa89488) };
       break;
+    }
     case 'brick':
       s = { wall: tint(mats.stone, 0xb46f55), trim: tint(mats.concrete, 0x8d8a83), roof: mats.concrete };
       break;
@@ -165,34 +171,33 @@ export function buildCabin(ctx: SiteContext, spec: CabinSpec): CabinResult {
     }
     for (const c of wins) mesh(new THREE.BoxGeometry(winW + 0.2, 0.1, 0.35), postMat, c, y0 + 1.02, 0.05, front);
   }
+  const fadeExtra: THREE.Material[] = [];
+  if (spec.bands) {
+    const bandMat = fadeMaterial(spec.bands);
+    fadeExtra.push(bandMat);
+    for (let i = 1; i < nf; i += 2) mesh(worldUvBox(W + 0.1, 0.8, 0.3), bandMat, 0, i * H + 2.6, 0.05, front);
+  }
   for (const sx of [-1, 1]) {
     mesh(new THREE.CylinderGeometry(0.16, 0.18, TH + 0.3, 7), postMat, sx * (W / 2), TH / 2, 0.05, front);
     mesh(new THREE.CylinderGeometry(0.16, 0.18, TH + 0.3, 7), st.trim, sx * (W / 2), fy + TH / 2, zb + 0.1, group);
   }
 
-  // Upper floors with stair ledges (alternating sides).
+  // Upper floors: full one-way slabs (jump up through them, S+Space to drop down) with a
+  // staircase of one-way steps every 0.9 m against alternating side walls.
   for (let i = 1; i < nf; i++) {
     const y = fy + i * H;
-    const stairLeft = i % 2 === 1;
-    const gapX0 = stairLeft ? -W / 2 + 0.2 : W / 2 - 3.2;
-    const gapX1 = gapX0 + 3;
-    // Floor slab with a stairwell gap
-    const segs: [number, number][] = [
-      [-W / 2, gapX0],
-      [gapX1, W / 2],
-    ];
-    for (const [a, b] of segs) {
-      if (b - a < 0.05) continue;
-      mesh(worldUvBox(b - a, 0.22, D - 0.3, 1.4), mats.woodDark, (a + b) / 2, y - 0.11, zc, group);
-      oneway(ctx, spec.x + a, spec.x + b, g + y, 'wood');
-    }
-    // Stair ledges inside the gap
-    const steps = Math.ceil(H / 1.2);
+    mesh(worldUvBox(W - 0.3, 0.22, D - 0.3, 1.4), mats.woodDark, 0, y - 0.11, zc, group);
+    oneway(ctx, spec.x - W / 2 + 0.15, spec.x + W / 2 - 0.15, g + y, 'wood');
+    const left = i % 2 === 1;
+    const sx0 = left ? -W / 2 + 0.4 : W / 2 - 2.8;
+    const steps = Math.max(2, Math.round(H / 0.9));
     for (let s = 1; s < steps; s++) {
-      const sy = y - H + s * (H / steps);
-      const sx0 = stairLeft ? gapX1 - (s / steps) * 3 - 1 : gapX0 + (s / steps) * 3;
-      mesh(worldUvBox(1, 0.18, 1.2, 0.8), mats.woodDark, sx0 + 0.5, sy - 0.09, -1.8, group);
-      oneway(ctx, spec.x + sx0, spec.x + sx0 + 1, g + sy, 'wood');
+      const sy = y - H + (s * H) / steps;
+      // Visual: a diagonal flight of treads behind the plane.
+      const tx = sx0 + (left ? s * 0.55 : 2.4 - s * 0.55);
+      mesh(worldUvBox(1.1, 0.16, 1.4, 0.8), mats.woodDark, tx, sy - 0.08, zb + 1.2, group);
+      mesh(new THREE.BoxGeometry(0.08, (s * H) / steps, 0.08), mats.woodDark, tx, y - H + (s * H) / steps / 2, zb + 1.9, group);
+      oneway(ctx, spec.x + sx0, spec.x + sx0 + 2.4, g + sy, 'wood');
     }
   }
 
@@ -251,7 +256,7 @@ export function buildCabin(ctx: SiteContext, spec: CabinSpec): CabinResult {
     x1: spec.x + W / 2 + 0.4,
     y0: g - 0.5,
     y1: g + fy + TH + 1,
-    materials: [frontMat, postMat, roofMat],
+    materials: [frontMat, postMat, roofMat, ...fadeExtra],
     meshes: [],
     opacity: 1,
   };

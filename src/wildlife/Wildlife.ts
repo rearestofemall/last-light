@@ -319,6 +319,15 @@ export class Wildlife {
     this.host.interactions.add(it);
   }
 
+  /** Debug/scripting: spawn an animal at x. */
+  spawnAt(sp: Species, x: number): void {
+    const y = this.world.resolveSpawnY(x, this.world.groundAt(x, 0.5), 0.5, 1);
+    const a = new Animal(sp, x, y);
+    a.state = 'wander';
+    this.animals.push(a);
+    this.group.add(a.rig.root);
+  }
+
   private spawn(region: RegionId, night: boolean, px: number): void {
     const pop = POPULATION[region];
     const counts: Partial<Record<Species, number>> = {};

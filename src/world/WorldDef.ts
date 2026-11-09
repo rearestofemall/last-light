@@ -82,7 +82,7 @@ export const REGIONS: RegionDef[] = [
     x0: -880,
     x1: -250,
     relief: 1.7,
-    baseTemp: -9,
+    baseTemp: -6,
     forest: 0.55,
     palette: { grass: 0xe4e9ef, grassDry: 0xcdd6df, dirt: 0x9ea6ae, rock: 0x6c737c, far: 0x9fb2c6 },
   },

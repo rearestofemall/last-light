@@ -113,14 +113,31 @@ export class World {
     sites.traverse((o) => (o.matrixAutoUpdate = false));
   }
 
-  private createSea(material: THREE.Material): THREE.Mesh {
-    const geo = new THREE.PlaneGeometry(700, Math.abs(TERRAIN_Z_BACK) + 20, 70, 8);
+  /**
+   * The sea: a band of water behind the beach, ending in a vertical "horizon" apron that
+   * hides the drowned terrain beyond (an orthographic camera never converges to a horizon).
+   */
+  private createSea(material: THREE.Material): THREE.Group {
+    const g = new THREE.Group();
+    const depth = 46;
+    const geo = new THREE.PlaneGeometry(700, depth, 70, 6);
     geo.rotateX(-Math.PI / 2);
-    const mesh = new THREE.Mesh(geo, material);
-    mesh.position.set(1390, SEA_Y, (TERRAIN_Z_BACK - 16) / 2 + 2);
-    mesh.receiveShadow = true;
-    mesh.renderOrder = 4;
-    return mesh;
+    const water = new THREE.Mesh(geo, material);
+    water.position.set(1390, SEA_Y, -12 - depth / 2);
+    water.receiveShadow = true;
+    water.renderOrder = 4;
+    g.add(water);
+    const apronMat = new THREE.ShaderMaterial({
+      fog: true,
+      uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, { uTop: { value: new THREE.Color(0x3c6470) }, uBottom: { value: new THREE.Color(0x203a44) } }]),
+      vertexShader: `varying float vY;\n#include <fog_pars_vertex>\nvoid main(){ vY = uv.y; vec4 mvPosition = modelViewMatrix * vec4(position,1.0); gl_Position = projectionMatrix * mvPosition;\n#include <fog_vertex>\n}`,
+      fragmentShader: `uniform vec3 uTop; uniform vec3 uBottom; varying float vY;\n#include <fog_pars_fragment>\nvoid main(){ gl_FragColor = vec4(mix(uBottom, uTop, vY), 1.0);\n#include <tonemapping_fragment>\n#include <colorspace_fragment>\n#include <fog_fragment>\n}`,
+    });
+    const apron = new THREE.Mesh(new THREE.PlaneGeometry(700, 40), apronMat);
+    apron.position.set(1390, SEA_Y - 20, -12 - depth);
+    g.add(apron);
+    void TERRAIN_Z_BACK;
+    return g;
   }
 
   /** Rebuild streamed content after a quality change. */

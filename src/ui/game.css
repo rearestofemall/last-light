@@ -1,8 +1,12 @@
 /* ---------- HUD: layout ---------- */
 .hud__topleft {
   position: absolute;
-  top: 18px;
-  left: 24px;
+  top: 14px;
+  left: 18px;
+  padding: 7px 12px 8px;
+  border-radius: 8px;
+  background: rgba(10, 11, 9, 0.32);
+  backdrop-filter: blur(3px);
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -30,8 +34,12 @@
 }
 .hud__info {
   position: absolute;
-  top: 18px;
-  right: 24px;
+  top: 14px;
+  right: 18px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(10, 11, 9, 0.32);
+  backdrop-filter: blur(3px);
   text-align: right;
   text-shadow: 0 1px 6px rgba(0, 0, 0, 0.6);
 }

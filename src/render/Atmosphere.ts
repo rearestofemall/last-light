@@ -21,6 +21,7 @@ export interface Atmosphere {
   hemiIntensity: number;
   cloudColor: THREE.Color;
   cloudCover: number;
+  /** Fog start/end measured from the gameplay plane (negative = in front of it). */
   fogNear: number;
   fogFar: number;
   /** Tint multiplier for parallax layers (darkens at night). */
@@ -59,8 +60,8 @@ const DAY: Preset = {
   hemiI: 1.0,
   cloud: c(0xf4efe6),
   layer: c(0xffffff),
-  fogNear: 150,
-  fogFar: 360,
+  fogNear: 15,
+  fogFar: 220,
 };
 const DAWN: Preset = {
   zenith: c(0x3e5584),
@@ -73,8 +74,8 @@ const DAWN: Preset = {
   hemiI: 0.72,
   cloud: c(0xf6b98e),
   layer: c(0xd9b7a4),
-  fogNear: 120,
-  fogFar: 320,
+  fogNear: -10,
+  fogFar: 180,
 };
 const NIGHT: Preset = {
   zenith: c(0x060a17),
@@ -87,8 +88,8 @@ const NIGHT: Preset = {
   hemiI: 0.38,
   cloud: c(0x252c3d),
   layer: c(0x2f3a55),
-  fogNear: 70,
-  fogFar: 240,
+  fogNear: -45,
+  fogFar: 110,
 };
 
 const tmpA = new THREE.Color();
@@ -108,8 +109,8 @@ export function createAtmosphere(): Atmosphere {
     hemiIntensity: 1,
     cloudColor: new THREE.Color(),
     cloudCover: 0.4,
-    fogNear: 150,
-    fogFar: 360,
+    fogNear: 15,
+    fogFar: 220,
     layerTint: new THREE.Color(1, 1, 1),
     stars: 0,
     darkness: 0,
@@ -174,8 +175,9 @@ export function computeAtmosphere(i: AtmosphereInput, out: Atmosphere): Atmosphe
   out.cloudCover = 0.25 + i.cloud * 0.7;
   out.cloudColor.lerp(grey, overcast * 0.5);
   const fogK = Math.max(i.fog, i.snow * 0.8);
-  out.fogNear = lerp(out.fogNear, 18, fogK);
-  out.fogFar = lerp(out.fogFar, 95, fogK);
+  // Thick fog: the plane itself sits inside the haze, the background disappears.
+  out.fogNear = lerp(out.fogNear, -40, fogK);
+  out.fogFar = lerp(out.fogFar, 45, fogK);
   if (i.coldness > 0) {
     out.fog.lerp(tmpA.setRGB(out.fog.r * 0.95, out.fog.g * 1.0, out.fog.b * 1.12), i.coldness);
   }

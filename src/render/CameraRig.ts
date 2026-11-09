@@ -2,7 +2,9 @@ import * as THREE from 'three';
 import { clamp, damp } from '../core/math';
 
 export const CAMERA_PITCH = THREE.MathUtils.degToRad(9);
-const DISTANCE = 140;
+/** Distance from the camera to the gameplay plane (fog is measured from here). */
+export const CAMERA_DISTANCE = 140;
+const DISTANCE = CAMERA_DISTANCE;
 
 /**
  * Orthographic 2.5D camera. Looks at the gameplay plane from +Z, pitched down slightly

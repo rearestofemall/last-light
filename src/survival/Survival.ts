@@ -40,7 +40,7 @@ export const RATES = {
   swimStamina: 7,
   jumpStamina: 9,
   staminaRegen: 24,
-  warmthRate: 1.6,
+  warmthRate: 0.6,
   healthRegen: 0.35,
 };
 
@@ -159,7 +159,7 @@ export class Survival {
     if (c.inWater) target -= 12;
     if (c.moving) target += 3;
     this.warmthTarget = clamp(target, 0, 100);
-    const rate = R.warmthRate * (c.fireHeat > 0.2 ? 2 : 1);
+    const rate = R.warmthRate * (c.fireHeat > 0.2 ? 3 : 1);
     v.warmth += clamp(this.warmthTarget - v.warmth, -rate * dt, rate * dt);
 
     // Sickness
@@ -181,7 +181,7 @@ export class Survival {
       causes.push('dehydration');
     }
     if (v.warmth < 12) {
-      drain += (12 - v.warmth) * 0.07;
+      drain += (12 - v.warmth) * 0.04;
       causes.push('the cold');
     }
     if (v.energy <= 0) {

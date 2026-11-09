@@ -56,6 +56,30 @@ export const plankTexture = (): THREE.Texture =>
     ),
   );
 
+/** Whitewashed planks for cottages and the lighthouse. */
+export const paintedPlankTexture = (): THREE.Texture =>
+  cached('planks-painted', () =>
+    canvasTexture(
+      256,
+      (g, rng) => {
+        const planks = 5;
+        const ph = 256 / planks;
+        for (let i = 0; i < planks; i++) {
+          const v = 0.9 + rng.range(-0.05, 0.05);
+          g.fillStyle = `rgb(${Math.round(236 * v)},${Math.round(232 * v)},${Math.round(222 * v)})`;
+          g.fillRect(0, i * ph, 256, ph);
+          for (let k = 0; k < 10; k++) {
+            g.fillStyle = `rgba(120,110,95,${rng.range(0.04, 0.12)})`;
+            g.fillRect(rng.range(0, 256), i * ph + rng.range(2, ph - 4), rng.range(10, 60), rng.range(1, 3));
+          }
+          g.fillStyle = 'rgba(70,60,50,0.35)';
+          g.fillRect(0, i * ph + ph - 3, 256, 3);
+        }
+      },
+      13,
+    ),
+  );
+
 export const shingleTexture = (): THREE.Texture =>
   cached('shingles', () =>
     canvasTexture(

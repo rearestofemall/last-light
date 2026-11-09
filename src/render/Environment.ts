@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { damp } from '../core/math';
 import type { Settings } from '../core/Settings';
 import { type Atmosphere, ATMOSPHERE_MORNING, computeAtmosphere, createAtmosphere } from './Atmosphere';
-import type { CameraRig } from './CameraRig';
+import { CAMERA_DISTANCE, type CameraRig } from './CameraRig';
 import { Lighting } from './Lighting';
 import { Parallax } from './Parallax';
 import { Particles } from './Particles';
@@ -77,8 +77,8 @@ export class Environment {
     this.sky.apply(a);
     this.lighting.apply(a);
     this.fog.color.copy(a.fog);
-    this.fog.near = a.fogNear;
-    this.fog.far = a.fogFar;
+    this.fog.near = Math.max(1, CAMERA_DISTANCE + a.fogNear);
+    this.fog.far = CAMERA_DISTANCE + a.fogFar;
     this.parallax.setTint(a.layerTint);
     this.renderer.toneMappingExposure = a.exposure;
   }
@@ -95,10 +95,10 @@ export class Environment {
       // Underground: no sky light, near-black fog, only carried and placed lights matter.
       const k = this.interiorK;
       a.fog.lerp(INTERIOR_FOG, k);
-      a.fogNear = a.fogNear * (1 - k) + 25 * k;
-      a.fogFar = a.fogFar * (1 - k) + 70 * k;
+      a.fogNear = a.fogNear * (1 - k) + 2 * k;
+      a.fogFar = a.fogFar * (1 - k) + 40 * k;
       a.sunIntensity *= 1 - k;
-      a.hemiIntensity = a.hemiIntensity * (1 - k) + 0.16 * k;
+      a.hemiIntensity = a.hemiIntensity * (1 - k) + 0.32 * k;
       a.hemiSky.lerp(new THREE.Color(0x46506a), k);
       a.darkness = Math.max(a.darkness, k * 0.85);
       a.exposure = a.exposure * (1 - k) + 1.35 * k;

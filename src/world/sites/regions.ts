@@ -242,19 +242,15 @@ export function city(ctx: SiteContext): void {
     for (let i = -5; i <= 5; i += 2) mesh(new THREE.BoxGeometry(1.2, 0.8, 0.05), ctx.mats.glass, i, 1.7, 1.41, car, false);
     mesh(new THREE.BoxGeometry(14, 0.3, 2.85), new THREE.MeshStandardMaterial({ color: 0xc0392b }), 0, 0.7, 0, car);
     solid(ctx, 805, 819, UG_Y, UG_Y + 2.6, 'metal');
+    // Crates stacked against both ends of the carriage: a two-step climb.
     for (const [cx, h] of [
-      [803.6, 0.8],
-      [820.4, 0.8],
+      [802.8, 0.9],
+      [804.2, 1.75],
+      [821.2, 0.9],
+      [819.8, 1.75],
     ] as const) {
-      mesh(worldUvBox(1.2, h, 1.2, 0.8), ctx.mats.woodDark, cx, UG_Y + h / 2, 0, ctx.group);
-      solid(ctx, cx - 0.6, cx + 0.6, UG_Y, UG_Y + h, 'wood');
-    }
-    for (const [cx, h] of [
-      [802.6, 1.6],
-      [821.4, 1.6],
-    ] as const) {
-      mesh(worldUvBox(1, h, 1, 0.8), ctx.mats.woodDark, cx, UG_Y + h / 2, -1.2, ctx.group);
-      oneway(ctx, cx - 0.5, cx + 0.5, UG_Y + h, 'wood');
+      mesh(worldUvBox(1.2, h, 1.2, 0.8), ctx.mats.woodDark, cx, UG_Y + h / 2, -1.2, ctx.group);
+      oneway(ctx, cx - 0.6, cx + 0.6, UG_Y + h, 'wood');
     }
     fixedLight(ctx, 'metro-barrel', 'barrel', 840, UG_Y + 1, -2.2, 400, false);
     lootCrate(ctx, 'metro-crate', 860, UG_Y, -2, 'Abandoned luggage', [['canned_food', 1], ['cloth', 3], ['fuel', 1], ['bandage', 1]]);
@@ -385,12 +381,14 @@ export function coast(ctx: SiteContext): void {
     // Collision: bow wall, deck as a one-way platform reached by crates.
     solid(ctx, x + 10.5, x + 14, g - 2, g + 6, 'metal');
     oneway(ctx, x - 10.5, x + 10.5, g + 4.7, 'wood');
+    // Stacked cargo inside the hold makes a way up to the deck.
     for (const [cx, h] of [
-      [x - 7, 1.4],
-      [x - 8.6, 2.9],
+      [x - 8.8, 1.2],
+      [x - 7.4, 2.4],
+      [x - 6.0, 3.6],
     ] as const) {
-      mesh(worldUvBox(1.2, h, 1.2, 0.8), ctx.mats.woodDark, cx, g + h / 2 - 0.3, -1.6, ctx.group);
-      oneway(ctx, cx - 0.6, cx + 0.6, g + h - 0.3, 'wood');
+      mesh(worldUvBox(1.3, h, 1.3, 0.8), ctx.mats.woodDark, cx, g + h / 2, -1.6, ctx.group);
+      oneway(ctx, cx - 0.65, cx + 0.65, g + h, 'wood');
     }
     ctx.fadeables.push({ x0: x - 11, x1: x + 11, y0: g - 1, y1: g + 4.5, materials: [front], meshes: [fp], opacity: 1 });
     ctx.interiors.push({ x0: x - 10.5, x1: x + 10.5, y0: g - 1, y1: g + 4.6 });
@@ -415,7 +413,7 @@ export function coast(ctx: SiteContext): void {
   // Greywater Lighthouse — five storeys, beacon on top.
   {
     const x = 1632;
-    const cab = buildCabin(ctx, { x, width: 8, height: 3.6, zBack: -4, zFront: 2, floors: 5, style: 'cottage', roof: 'flat', noDoor: 'right' });
+    const cab = buildCabin(ctx, { x, width: 8, height: 3.6, zBack: -4, zFront: 2, floors: 5, style: 'cottage', roof: 'flat', noDoor: 'right', bands: ctx.mats.red });
     const p = cab.group;
     // Red bands
     for (let i = 1; i < 5; i += 2) mesh(worldUvBox(8.3, 0.6, 0.3), ctx.mats.red, 0, CABIN_FLOOR + i * 3.6 + 2.8, -4.2, p);
