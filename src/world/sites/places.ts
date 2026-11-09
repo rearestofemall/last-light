@@ -172,7 +172,7 @@ export function rangerStation(ctx: SiteContext, x: number): void {
   mesh(new THREE.BoxGeometry(1.8, 0.18, 0.8), ctx.mats.fabric, -4.6, CABIN_FLOOR + 2.15, -1.6, p);
   furniture.paper(ctx, p, -3.6, CABIN_FLOOR + 2.24, -1.4, -0.4);
 
-  // The crate by the ladder sits on the gameplay plane: a step up to the loft.
+  // The crate is something to stand on.
   oneway(ctx, x - 1.9 - 0.42, x - 1.9 + 0.42, cab.floorY + 0.85, 'wood', undefined, -0.62, 0.22);
   readable(ctx, 'ranger-log', x + 0.2, cab.floorY + 1.0, "Ranger's log");
   inspectable(ctx, 'radio', x + 1.3, cab.floorY + 1.0, 'Field radio', 0.8);

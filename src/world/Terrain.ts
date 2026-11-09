@@ -119,16 +119,22 @@ export class Terrain {
   heightAt3(x: number, z: number): number {
     const az = Math.abs(z);
     // Authored cliff ridges are local landmarks near the road, not map-wide walls.
-    const b = this.base(x) - this.ridge(x) * smoothstep(28, 80, az);
+    const b = this.base(x) - this.ridge(x) * smoothstep(16, 44, az);
     const off = smoothstep(PLANE_BAND, PLANE_BAND + 18, az);
     const rel = this.relief(x);
     let h = b;
-    h += off * rel * (2.8 * this.d.fbm2(x * 0.018, z * 0.02, 3) + 1.1 * this.d.fbm2(x * 0.07 + 9, z * 0.07, 2));
+    // Rivers and lakes keep level banks: hills fade out near their channels.
+    let calm = 1;
+    for (const r of RIVERS) {
+      const d = Math.abs(x - r.x);
+      if (d < r.width / 2 + r.bank + 50) calm = Math.min(calm, smoothstep(r.width / 2 + r.bank, r.width / 2 + r.bank + 40, Math.abs(x - r.x - this.meander(r, z))));
+    }
+    h += calm * off * rel * (2.8 * this.d.fbm2(x * 0.018, z * 0.02, 3) + 1.1 * this.d.fbm2(x * 0.07 + 9, z * 0.07, 2));
     h += 0.22 * this.d.fbm2(x * 0.21, z * 0.21, 2) * smoothstep(1.4, 3.5, az);
     h += this.walls(x, z);
     // Hills and valleys over the open land, growing away from the road.
     const far = smoothstep(20, 120, az);
-    h += far * rel * 9 * this.d.fbm2(x * 0.006 + 40, z * 0.006, 3);
+    h += calm * far * rel * 9 * this.d.fbm2(x * 0.006 + 40, z * 0.006, 3);
     // Border ridge to the Frostlands, notched where the road crosses.
     const ridge = smoothstep(PASS_RIDGE.x0, PASS_RIDGE.x0 + 6, x) * (1 - smoothstep(PASS_RIDGE.x1 - 6, PASS_RIDGE.x1, x));
     if (ridge > 0) h += ridge * 34 * smoothstep(PASS_RIDGE.notch, PASS_RIDGE.notch + 10, az);
@@ -143,7 +149,8 @@ export class Terrain {
     for (const r of RIVERS) {
       const k = this.riverFactor(r, x, z);
       if (k > 0) {
-        const bed = this.riverBedY(r) + 0.25 * this.d.noise2(x * 0.4, z * 0.4) * k;
+        // Frozen lakes: the ground is the ice sheet itself, level across the valley.
+        const bed = r.frozen ? this.riverWaterY(r) - 0.04 : this.riverBedY(r) + 0.25 * this.d.noise2(x * 0.4, z * 0.4) * k;
         h = lerp(h, bed, k);
       }
     }

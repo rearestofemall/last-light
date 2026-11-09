@@ -193,22 +193,42 @@ export function buildCabin(ctx: SiteContext, spec: CabinSpec): CabinResult {
     mesh(new THREE.CylinderGeometry(0.16, 0.18, TH + 0.3, 7), st.trim, sx * (W / 2), fy + TH / 2, zb + 0.1, group);
   }
 
-  // Upper floors: full one-way slabs (jump up through them, S+Space to drop down) with a
-  // staircase of one-way steps every 0.9 m against alternating side walls.
+  // Upper floors: one-way slabs (S/Z + Space drops through) reached by walkable flights of
+  // solid steps. Flights alternate between two strips along the back wall so a flight never
+  // sits over the head of the one below; each slab has a stairwell over its arriving flight.
+  const RUN = 0.62;
   for (let i = 1; i < nf; i++) {
     const y = fy + i * H;
-    mesh(worldUvBox(W - 0.3, 0.22, D - 0.3, 1.4), mats.woodDark, 0, y - 0.11, zc, group);
-    oneway(ctx, spec.x - W / 2 + 0.15, spec.x + W / 2 - 0.15, g + y, 'wood', undefined, zb + oz, zf + oz);
     const left = i % 2 === 1;
-    const sx0 = left ? -W / 2 + 0.4 : W / 2 - 2.8;
-    const steps = Math.max(2, Math.round(H / 0.9));
-    for (let s = 1; s < steps; s++) {
-      const sy = y - H + (s * H) / steps;
-      // Visual: a diagonal flight of treads behind the plane.
-      const tx = sx0 + (left ? s * 0.55 : 2.4 - s * 0.55);
-      mesh(worldUvBox(1.1, 0.16, 1.4, 0.8), mats.woodDark, tx, sy - 0.08, zb + 1.2, group);
-      mesh(new THREE.BoxGeometry(0.08, (s * H) / steps, 0.08), mats.woodDark, tx, y - H + (s * H) / steps / 2, zb + 1.9, group);
-      oneway(ctx, spec.x + sx0, spec.x + sx0 + 2.4, g + sy, 'wood', undefined, zb + 0.3 + oz, zb + 2.3 + oz);
+    const steps = Math.ceil(H / 0.5);
+    const rise = H / steps;
+    const len = steps * RUN;
+    const fz0 = left ? zb + 0.25 : zb + 1.45;
+    const fz1 = fz0 + 1.2;
+    const fx0 = left ? -W / 2 + 0.3 : W / 2 - 0.3 - len;
+    for (let k = 1; k <= steps; k++) {
+      const top = y - H + k * rise;
+      const sx0 = left ? fx0 + (k - 1) * RUN : fx0 + len - k * RUN;
+      mesh(worldUvBox(RUN, k * rise, fz1 - fz0, 0.8), mats.woodDark, sx0 + RUN / 2, y - H + (k * rise) / 2, (fz0 + fz1) / 2, group);
+      solid(ctx, spec.x + sx0, spec.x + sx0 + RUN, g + y - H, g + top, 'wood', undefined, fz0 + oz, fz1 + oz);
+    }
+    // Slab with a stairwell over the flight.
+    const X0 = -W / 2 + 0.15;
+    const X1 = W / 2 - 0.15;
+    const Z0 = zb;
+    const Z1 = zf;
+    const hx0 = fx0;
+    const hx1 = fx0 + len;
+    const rects: [number, number, number, number][] = [
+      [X0, X1, fz1, Z1],
+      [X0, X1, Z0, fz0],
+      [X0, hx0, fz0, fz1],
+      [hx1, X1, fz0, fz1],
+    ];
+    for (const [x0, x1, z0, z1] of rects) {
+      if (x1 - x0 < 0.05 || z1 - z0 < 0.05) continue;
+      mesh(worldUvBox(x1 - x0, 0.22, z1 - z0, 1.4), mats.woodDark, (x0 + x1) / 2, y - 0.11, (z0 + z1) / 2, group);
+      oneway(ctx, spec.x + x0, spec.x + x1, g + y, 'wood', undefined, z0 + oz, z1 + oz);
     }
   }
 
@@ -248,20 +268,24 @@ export function buildCabin(ctx: SiteContext, spec: CabinSpec): CabinResult {
   solid(ctx, spec.x - W / 2, spec.x + W / 2, g + fy, g + roofTop, 'wood', undefined, zb + oz, zb + 0.25 + oz);
   solid(ctx, spec.x - W / 2, spec.x + W / 2, g + fy, g + roofTop, 'wood', undefined, zf - 0.2 + oz, zf + oz);
 
-  // Optional loft (one-way platform reached by jumping from furniture)
+  // Optional loft (one-way platform reached by a short staircase)
   if (spec.loft) {
     const L = spec.loft;
     const lw = L.x1 - L.x0;
     mesh(worldUvBox(lw, 0.18, D - 0.4, 1.4), mats.woodDark, (L.x0 + L.x1) / 2, fy + L.height - 0.09, zc, group);
-    mesh(new THREE.BoxGeometry(0.12, 0.9, 0.12), mats.woodDark, L.x1 - 0.06, fy + L.height + 0.45, zf - 0.4, group);
-    mesh(new THREE.BoxGeometry(0.1, 0.1, D - 0.6), mats.woodDark, L.x1 - 0.06, fy + L.height + 0.9, zc, group);
-    for (const z of [zb + 0.6, zf - 0.6]) mesh(new THREE.BoxGeometry(0.2, L.height, 0.2), mats.woodDark, L.x1 - 0.1, fy + L.height / 2, z, group);
-    const ladder = new THREE.Group();
-    ladder.position.set(L.x1 + 0.35, fy, -1.6);
-    ladder.rotation.z = -0.15;
-    group.add(ladder);
-    for (const lz of [-0.25, 0.25]) mesh(new THREE.BoxGeometry(0.07, L.height + 0.6, 0.07), mats.woodDark, 0, (L.height + 0.6) / 2, lz, ladder);
-    for (let r = 0.35; r < L.height + 0.4; r += 0.38) mesh(new THREE.BoxGeometry(0.06, 0.05, 0.56), mats.woodDark, 0, r, 0, ladder);
+    mesh(new THREE.BoxGeometry(0.12, 0.9, 0.12), mats.woodDark, L.x1 - 0.06, fy + L.height + 0.45, zf - 1.5, group);
+    mesh(new THREE.BoxGeometry(0.1, 0.1, D - 1.8), mats.woodDark, L.x1 - 0.06, fy + L.height + 0.9, (zb + 0.3 + zf - 1.5) / 2, group);
+    for (const z of [zb + 0.6, zf - 1.5]) mesh(new THREE.BoxGeometry(0.2, L.height, 0.2), mats.woodDark, L.x1 - 0.1, fy + L.height / 2, z, group);
+    // A short flight of solid steps down from the loft edge along the front wall.
+    const n = Math.ceil(L.height / 0.45);
+    const lr = L.height / n;
+    const z0 = zf - 1.45;
+    const z1 = zf - 0.25;
+    for (let k = 1; k <= n; k++) {
+      const sx0 = L.x1 + (n - k) * 0.62;
+      mesh(worldUvBox(0.62, k * lr, z1 - z0, 0.8), mats.woodDark, sx0 + 0.31, fy + (k * lr) / 2, (z0 + z1) / 2, group);
+      solid(ctx, spec.x + sx0, spec.x + sx0 + 0.62, g + fy, g + fy + k * lr, 'wood', undefined, z0 + oz, z1 + oz);
+    }
     oneway(ctx, spec.x + L.x0, spec.x + L.x1, g + fy + L.height, 'wood', undefined, zb + oz, zf + oz);
   }
 

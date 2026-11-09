@@ -604,12 +604,7 @@ export function frost(ctx: SiteContext): void {
     });
   }
 
-  // Lake Tamsin: frozen solid; walk across the ice.
-  {
-    const r = RIVERS.find((rv) => rv.id === 'frozen-lake')!;
-    const top = t.riverWaterY(r);
-    solid(ctx, r.x - r.width / 2 - r.bank - 10, r.x + r.width / 2 + r.bank + 10, top - 2, top, 'ice', undefined, FULL_Z[0], FULL_Z[1]);
-  }
+  // Lake Tamsin is frozen solid: the terrain itself is the ice sheet (see Terrain.heightAt3).
 
   // Weather Hut 3
   {
