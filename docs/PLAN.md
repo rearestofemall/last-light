@@ -97,83 +97,52 @@ and the pause screen.
 | IndexedDB unavailable (private mode) | Falls back to an in-memory store and warns the player that progress won't persist |
 | Scope creep / disconnected features | Strict milestone order; each milestone has to be playable and pass typecheck, tests and build before the next one starts |
 
-## 5. Milestones
+## 5. Milestones — status
 
-Each milestone has to typecheck, pass tests, build, and be playable.
+All six milestones are implemented. Each one was typechecked, tested, built and played in a browser (headless
+Chromium with scripted input).
 
-### M1 — Playable foundation ✅ (this change)
-* Vite/TS/Three project, modular structure, fixed-step loop, input, typed events, settings.
-* Renderer with Low/Medium/High presets, ACES, soft shadows that follow the player.
-* Orthographic camera rig: smoothing, look-ahead, zoom, world bounds.
-* Seeded terrain heightfield with depth, rivers cutting valleys, flattened sites, chunk streaming.
-* Procedural vegetation (pine, broadleaf, dead trees, bushes, grass, rocks) with wind sway.
-* Sky shader (gradient, sun glow, drifting clouds), 4 parallax layers, fog, ambient dust particles, animated water.
-* Player: procedural rigged character, walk/run/jump/fall/swim animation, coyote time, jump buffer, variable jump,
-  step-up, slopes, one-way platforms (drop through with S), wading and swimming.
-* The Verdant Woods: spawn campsite, trailhead, Blackwater River with a fallen log bridge, Ranger Station cabin
-  (cut-away, loft), Eastridge rock ledges, Hollow Creek, Hunter's Lodge; blocked passes at both ends for now.
-* Interaction system with prompts. Readable notes and signs; discovered locations with region banners.
-* Main menu (live scene behind it), New Game / Continue / Settings / Controls, pause menu, settings panel, note reader,
-  contextual control hints, toasts.
-* IndexedDB save with versioning, a backup slot, autosave, and graceful corrupt-save handling.
-* Synthesised audio: wind and forest ambience, river proximity, surface-aware footsteps, jump and land, UI sounds; volume
-  buses and mute.
+| Milestone | Status | Notes |
+|---|---|---|
+| M1 Playable foundation | ✅ | Terrain, camera, physics, character, Verdant Woods, menus, saves, audio |
+| M2 Survival | ✅ | Six vitals with consequences; items, inventory (drag-and-drop, containers), 27 recipes with progressive unlocks, resource nodes with tools and regrowth |
+| M3 World systems | ✅ | Clock with seasons, blended atmosphere with stars and moon, weather state machine, climate model, fuelled lights with a fixed light pool, wildlife state machines (wolves fear light) |
+| M4 Construction | ✅ | Grid build mode with support rules and preview, 13 pieces, doors, chests, beds, lamps, workbench, shelter, demolition refunds, persistence |
+| M5 Exploration | ✅ | Frostlands, City and Coast with authored sites; gates; three underground levels; map; journal; 15-step main quest; optional photographs and radio; ending |
+| M6 Polish | ✅ | Adaptive generative music, ~25 synthesised SFX, ambience, action animations, adaptive resolution, throttled shadows, weak-device defaults, save v2 migration |
 
-### M2 — Survival
-* Attributes: Health, Hunger, Thirst, Temperature, Stamina, Energy. Each has rates and thresholds and real
-  consequences: starving, dehydrating or freezing drains health; low stamina blocks sprinting and jumping; low energy
-  slows movement and recovery; fall damage.
-* Item database (categories, stack sizes, descriptions); slot inventory with drag-and-drop and split/merge.
-* Harvestable nodes in the gameplay plane: trees (wood, fiber), rocks (stone), bushes (food, fiber), river (water),
-  scrap piles (metal, cloth), herbs (medicinal). Nodes deplete and respawn.
-* Crafting panel; recipes that consume and produce real items; tools gate harvesting (an axe is needed for trees).
-* Consumables: eat, drink, apply medicine. Compact HUD bars with warning states.
+**Verification performed**
+- 48 unit tests: terrain, collision, movement, saves and migration, inventory, crafting, survival, clock, weather and quests.
+- A bot walked every region end to end. A planner bot climbed every multi-storey structure (apartments, broadcast house,
+  lighthouse, station, loft, shipwreck); the metro carriage was climbed with a scripted input sequence.
+- A scripted playthrough of the entire main questline, from the tent note to throwing the breaker and the ending, using
+  real keypresses.
+- Save → full page reload → Continue restores position, inventory, structures, fire fuel, quests and settings.
+  Corrupted saves recover from the backup or are reported clearly.
 
-### M3 — World systems
-* WorldClock (day length ~20 min) driving sun and moon position, sky, light colour and star field.
-* Light sources: campfire (place, ignite, refuel, extinguish), torch, lantern (fuel), fixed lamps. Real `PointLight`s
-  in a pooled budget, and a `lightLevelAt` query used by gameplay (fear/sanity-style "darkness" exposure, wildlife).
-* Weather state machine: clear, overcast, rain, fog, storm, snow, with wind. Rain puts out exposed fires, snowstorms cut
-  visibility and raise cold. Temperature model: region, time of day, weather, wet clothes, shelter, nearby fire.
-* Seasonal drift over days.
-* Wildlife: deer, rabbits, wolves, birds, fish. Behaviour states (idle, wander, graze, drink, flee, stalk, sleep) that
-  depend on time of day, light and weather.
-
-### M4 — Construction
-* Build mode with a snapping grid, ghost preview with valid and invalid tinting, and resource costs.
-* Pieces: floor, wall, wall with window, doorway and door, roof, storage chest, campfire, bedroll and bed, table.
-* Structures count as shelter (they block rain and wind and help temperature), you can sleep in beds, and removing a
-  piece refunds part of its cost. Everything persists.
-* Storage containers with player ⇄ container transfer.
-
-### M5 — Exploration
-* Open the passes: Frostlands, Forgotten City (with underground passages), Drowned Coast, each with its own terrain
-  profile, palette, vegetation, props and hazards.
-* Map screen (explored-region reveal, landmarks, player marker).
-* Story: journals, photographs, radio transmissions, a research facility. Journal screen. The main questline reveals
-  the cause of the blackout; optional discoveries add detail. Recipes unlock through discoveries.
-
-### M6 — Polish
-* Adaptive synthesised music per region and time of day, plus remaining SFX.
-* Animation polish, light shafts, weather particles, post-processing on High.
-* Performance profiling, save/load round-trip testing, and bug fixing.
+**Known limitations**
+- Frame rate was only measured with software rendering (SwiftShader), not on real GPUs. Draw calls stay around 65–140
+  per frame and triangles around 20–100k.
+- Discarded items are destroyed (there are no item drops in the world). There is one save slot.
+- Wildlife is not saved; animals respawn around the player.
+- Keyboard and mouse only (no gamepad or touch controls).
 
 ## 6. Acceptance criteria tracking
 
 | # | Criterion | Milestone |
 |---|---|---|
-| 1 | Start a new game and enter the wilderness | M1 |
-| 2 | Move, jump, interact | M1 |
-| 3 | Terrain collision | M1 |
-| 4 | Collect resources | M2 |
-| 5 | Inventory quantities update | M2 |
-| 6 | Crafting consumes and produces | M2 |
-| 7 | Survival attributes change over time | M2 |
-| 8 | Day/night | M3 |
-| 9 | Light sources illuminate | M3 |
-| 10 | Weather affects gameplay | M3 |
-| 11 | Buildings place and persist | M4 |
-| 12 | Regions explorable | M5 |
-| 13 | Story discoveries recorded | M5 (location discovery from M1) |
-| 14 | Save/load restores world | M1 foundation, extended every milestone |
-| 15 | Production build passes | every milestone |
+| 1 | Start a new game and enter the wilderness | M1 ✅ |
+| 2 | Move, jump, interact | M1 ✅ |
+| 3 | Terrain collision | M1 ✅ |
+| 4 | Collect resources | M2 ✅ |
+| 5 | Inventory quantities update | M2 ✅ |
+| 6 | Crafting consumes and produces | M2 ✅ |
+| 7 | Survival attributes change over time | M2 ✅ |
+| 8 | Day/night | M3 ✅ |
+| 9 | Light sources illuminate | M3 ✅ |
+| 10 | Weather affects gameplay | M3 ✅ |
+| 11 | Buildings place and persist | M4 ✅ |
+| 12 | Regions explorable | M5 ✅ |
+| 13 | Story discoveries recorded | M5 ✅ |
+| 14 | Save/load restores world | ✅ |
+| 15 | Production build passes | ✅ |
