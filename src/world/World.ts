@@ -122,6 +122,33 @@ export class World {
     // Sites are static: freeze their transforms.
     sites.updateMatrixWorld(true);
     sites.traverse((o) => (o.matrixAutoUpdate = false));
+    // Distance culling: everything past the fog is moved to a layer the cameras don't render.
+    const sphere = new THREE.Sphere();
+    sites.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh && !(o as THREE.Points).isPoints && !(o as THREE.Sprite).isSprite) return;
+      const geo = m.geometry;
+      if (!geo) return;
+      if (!geo.boundingSphere) geo.computeBoundingSphere();
+      sphere.copy(geo.boundingSphere!).applyMatrix4(o.matrixWorld);
+      this.cullables.push({ obj: o, x: sphere.center.x, z: sphere.center.z, r: sphere.radius, culled: false });
+    });
+  }
+
+  private cullables: { obj: THREE.Object3D; x: number; z: number; r: number; culled: boolean }[] = [];
+  private cullTimer = 0;
+  /** Site objects farther than this (beyond the fog) are not drawn. */
+  static readonly SITE_VIEW = 195;
+
+  private cullSites(fx: number, fz: number): void {
+    const R = World.SITE_VIEW;
+    for (const c of this.cullables) {
+      const far = Math.hypot(c.x - fx, c.z - fz) - c.r > R;
+      if (far === c.culled) continue;
+      c.culled = far;
+      if (far) c.obj.layers.set(1);
+      else c.obj.layers.set(0);
+    }
   }
 
   /** The sea north of the Drowned Coast, ending in a horizon apron under the mountains' haze. */
@@ -152,6 +179,7 @@ export class World {
 
   preload(focusX: number, focusZ: number): void {
     this.chunks.buildAll(focusX, focusZ);
+    this.cullSites(focusX, focusZ);
   }
 
   /** Apply any gates whose story flag has been set (call after loading, and each frame). */
@@ -189,6 +217,11 @@ export class World {
 
   update(dt: number, focusX: number, focusZ: number, playerX: number, playerY: number, playerZ: number): void {
     this.chunks.update(focusX, focusZ);
+    this.cullTimer -= dt;
+    if (this.cullTimer <= 0) {
+      this.cullTimer = 0.3;
+      this.cullSites(focusX, focusZ);
+    }
     this.applyGates();
     for (const n of this.npcs) n.update(dt);
     for (const f of this.fadeables) {

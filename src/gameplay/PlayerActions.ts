@@ -122,6 +122,10 @@ export class PlayerActions {
     this.model.swing();
     this.events.emit('sfx', { name: 'swing' });
     const b = this.player.body;
+    // Aim assist: turn to the closest animal in reach, else swing where the camera looks.
+    const tgt = this.wildlife.nearest(b.x, b.y, b.z, 2.6);
+    if (tgt) this.player.heading = Math.atan2(tgt.x - b.x, tgt.z - b.z);
+    else this.player.heading = Math.atan2(-Math.sin(this.player.cameraYaw), -Math.cos(this.player.cameraYaw));
     const hit = this.wildlife.strike(b.x, b.y, b.z, this.player.facingX, this.player.facingZ, 2.1, damage);
     if (hit) {
       this.events.emit('sfx', { name: 'hit', x: b.x });

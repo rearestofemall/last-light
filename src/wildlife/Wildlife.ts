@@ -266,6 +266,21 @@ export class Wildlife {
   }
 
   /** Attack animals in front of the player. Returns true if something was hit. */
+  /** Closest living animal within range (for melee aim assist). */
+  nearest(x: number, y: number, z: number, range: number): { x: number; z: number } | null {
+    let best: { x: number; z: number } | null = null;
+    let bd = range;
+    for (const a of this.animals) {
+      if (a.state === 'dead' || Math.abs(a.body.y - y) > 1.6) continue;
+      const d = Math.hypot(a.body.x - x, a.body.z - z) - a.body.r;
+      if (d < bd) {
+        bd = d;
+        best = { x: a.body.x, z: a.body.z };
+      }
+    }
+    return best;
+  }
+
   strike(x: number, y: number, z: number, fx: number, fz: number, reach: number, damage: number): boolean {
     let hit = false;
     for (const a of this.animals) {
