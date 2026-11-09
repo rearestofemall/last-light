@@ -903,3 +903,8 @@
     top: 52px;
   }
 }
+
+.ending__actions .menu-btn {
+  width: auto;
+  padding-left: 30px;
+}

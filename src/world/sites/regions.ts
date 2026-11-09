@@ -423,6 +423,14 @@ export function coast(ctx: SiteContext): void {
     readable(ctx, 'keeper-log', x - 1.3, cab.floorY + 1, 'Keeper’s log');
     readable(ctx, 'j-note-4', x + 1, cab.storeys[4] + 1, 'Note in the lantern room');
     lootCrate(ctx, 'keeper-crate', x + 2.5, cab.floorY, -0.4, 'Keeper’s stores', [['hide', 3], ['cloth', 4], ['fuel', 3], ['canned_food', 2]]);
+    // The keeper's workbench: where coats were stitched for survivors.
+    const wb = new THREE.Group();
+    wb.position.set(2.2, CABIN_FLOOR, -3.1);
+    p.add(wb);
+    mesh(worldUvBox(1.8, 0.12, 0.9), ctx.mats.wood, 0, 0.9, 0, wb);
+    for (const sx of [-1, 1]) mesh(worldUvBox(0.12, 0.84, 0.8), ctx.mats.woodDark, sx * 0.8, 0.42, 0, wb);
+    ctx.stations.push({ x: x + 2.2, y: cab.floorY, kind: 'workbench' });
+    ctx.interactions.add({ id: 'keeper-bench', x: x + 2.2, y: cab.floorY + 0.9, radius: 1.2, verb: 'Use', label: 'workbench', onInteract: () => ctx.host.openCrafting() });
     // Lantern room on the roof
     const ly = cab.floorY + 18.4;
     mesh(new THREE.CylinderGeometry(2, 2.2, 0.3, 12), ctx.mats.red, x, ly, -1, ctx.group);

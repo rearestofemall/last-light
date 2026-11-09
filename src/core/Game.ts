@@ -43,6 +43,7 @@ export class Game implements GameApi {
   private saving = false;
   private projVec = new THREE.Vector3();
   private frameCount = 0;
+  private hudTimer = 0;
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -93,10 +94,10 @@ export class Game implements GameApi {
     this.session.attachUI(this.ui);
     this.session.captureInitialState();
     this.session.tutorial.enabled = this.settings.get().showHints;
-    this.ui.reader.onClose = () => this.input.flush();
-    this.ui.backpack.onClose = () => this.input.flush();
-    this.ui.map.onClose = () => this.input.flush();
-    this.ui.journal.onClose = () => this.input.flush();
+    this.ui.reader.onClose = () => this.input.dropGameplayLatches();
+    this.ui.backpack.onClose = () => this.input.dropGameplayLatches();
+    this.ui.map.onClose = () => this.input.dropGameplayLatches();
+    this.ui.journal.onClose = () => this.input.dropGameplayLatches();
     this.events.on('player:land', (e) => {
       if (e.impact > 17) this.rig.addShake((e.impact - 17) / 12);
     });
@@ -271,7 +272,12 @@ export class Game implements GameApi {
     if (this.state === 'menu') s.lights.update(dt, this.rig.focus.x, this.rig.focus.y, 0, 0.3);
     const envIn = s.environment(this.rig.focus.x, this.rig.focus.y);
     this.env.update(dt, this.renderer.aspect, this.renderer.pixelRatio, envIn);
-    if (this.state !== 'menu') this.ui.hud.frame(s.hudFrame(this.env.atmosphere.darkness));
+    // HUD DOM updates at 10 Hz: plenty for gauges, cheap on slow CPUs.
+    this.hudTimer -= dt;
+    if (this.state !== 'menu' && this.hudTimer <= 0) {
+      this.hudTimer = 0.1;
+      this.ui.hud.frame(s.hudFrame(this.env.atmosphere.darkness));
+    }
     this.audio.update(dt, {
       x: this.rig.focus.x,
       time: this.env.time,

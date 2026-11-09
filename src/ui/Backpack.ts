@@ -281,7 +281,7 @@ export class Backpack {
             this.recipe = r;
             this.events.emit('ui:sound', { kind: 'click' });
             this.render();
-          } }, h('span', { class: 'craft__icon', html: itemIcon(r.out) }), h('span', {}, ITEMS[r.out].name + (r.qty > 1 ? ` ×${r.qty}` : '')), ok ? h('span', { class: 'craft__dot' }) : null),
+          } }, h('span', { class: 'craft__icon', html: itemIcon(r.out) }), h('span', {}, (r.name ?? ITEMS[r.out].name) + (r.qty > 1 ? ` ×${r.qty}` : '')), ok ? h('span', { class: 'craft__dot' }) : null),
         );
       }
     }
@@ -304,7 +304,7 @@ export class Backpack {
       detail = h(
         'div',
         { class: 'bp__details' },
-        h('div', { class: 'det__head' }, h('span', { class: 'det__icon', html: itemIcon(r.out) }), h('div', {}, h('div', { class: 'det__name' }, d.name + (r.qty > 1 ? ` ×${r.qty}` : '')), h('div', { class: 'det__cat' }, CATEGORY_LABEL[d.category]))),
+        h('div', { class: 'det__head' }, h('span', { class: 'det__icon', html: itemIcon(r.out) }), h('div', {}, h('div', { class: 'det__name' }, (r.name ?? d.name) + (r.qty > 1 ? ` ×${r.qty}` : '')), h('div', { class: 'det__cat' }, CATEGORY_LABEL[d.category]))),
         h('p', { class: 'det__desc' }, d.description),
         h('div', { class: 'bp__label' }, 'Requires'),
         ...reqs,

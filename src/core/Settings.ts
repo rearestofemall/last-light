@@ -58,7 +58,23 @@ export class Settings {
   private listeners = new Set<(s: GameSettings, changed: (keyof GameSettings)[]) => void>();
 
   constructor() {
-    this.value = { ...DEFAULT_SETTINGS, ...Settings.load() };
+    const saved = Settings.load();
+    this.value = { ...DEFAULT_SETTINGS, ...saved };
+    // First launch on modest hardware: start on Low (adaptive resolution handles the rest).
+    if (saved.quality === undefined && Settings.weakDevice()) this.value.quality = 'low';
+  }
+
+  /** Heuristic: few cores, little memory, or a phone/tablet. */
+  static weakDevice(): boolean {
+    try {
+      const nav = navigator as Navigator & { deviceMemory?: number };
+      const cores = nav.hardwareConcurrency ?? 8;
+      const mem = nav.deviceMemory ?? 8;
+      const mobile = /Android|iPhone|iPad|Mobile/i.test(nav.userAgent);
+      return cores <= 4 || mem <= 4 || mobile;
+    } catch {
+      return false;
+    }
   }
 
   private static load(): Partial<GameSettings> {

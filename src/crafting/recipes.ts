@@ -9,6 +9,8 @@ export interface Recipe {
   group: 'Survival' | 'Tools & Light' | 'Food & Medicine' | 'Building' | 'Furniture';
   /** How the recipe is learned. 'start' = known from the beginning. */
   unlock: 'start' | string;
+  /** Display name when several recipes make the same item. */
+  name?: string;
 }
 
 /**
@@ -24,8 +26,8 @@ export const RECIPES: Recipe[] = [
   { id: 'bandage', out: 'bandage', qty: 1, cost: { cloth: 2 }, group: 'Food & Medicine', unlock: 'start' },
   { id: 'cooked_meat', out: 'cooked_meat', qty: 1, cost: { raw_meat: 1 }, station: 'fire', group: 'Food & Medicine', unlock: 'start' },
   { id: 'water_clean', out: 'water_clean', qty: 1, cost: { water_dirty: 1 }, station: 'fire', group: 'Food & Medicine', unlock: 'start' },
-  { id: 'bottle', out: 'bottle', qty: 1, cost: { hide: 1, fiber: 3 }, group: 'Survival', unlock: 'loc:blackwater' },
-  { id: 'bottle_scrap', out: 'bottle', qty: 1, cost: { metal: 2 }, group: 'Survival', unlock: 'loc:blackwater' },
+  { id: 'bottle', out: 'bottle', qty: 1, cost: { hide: 1, fiber: 3 }, group: 'Survival', unlock: 'loc:blackwater', name: 'Waterskin' },
+  { id: 'bottle_scrap', out: 'bottle', qty: 1, cost: { metal: 2 }, group: 'Survival', unlock: 'loc:blackwater', name: 'Tin Canteen' },
   { id: 'floor', out: 'floor', qty: 1, cost: { wood: 4 }, group: 'Building', unlock: 'note:ranger-log' },
   { id: 'wall', out: 'wall', qty: 1, cost: { wood: 4, fiber: 1 }, group: 'Building', unlock: 'note:ranger-log' },
   { id: 'chest', out: 'chest', qty: 1, cost: { wood: 6, fiber: 2 }, group: 'Furniture', unlock: 'note:ranger-log' },

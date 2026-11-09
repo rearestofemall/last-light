@@ -87,7 +87,7 @@ const NIGHT: Preset = {
   hemiGround: c(0x0d0d12),
   hemiI: 0.38,
   cloud: c(0x252c3d),
-  layer: c(0x2f3a55),
+  layer: c(0x1c2335),
   fogNear: -45,
   fogFar: 110,
 };
