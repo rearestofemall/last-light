@@ -15,6 +15,8 @@ export interface Collider {
 }
 
 const BUCKET = 16;
+/** Anything deeper than this below the terrain surface is an underground level. */
+export const UNDERGROUND_DEPTH = 18;
 
 /**
  * Static collision geometry: the terrain profile plus a spatially-hashed set of boxes.
@@ -70,7 +72,7 @@ export class CollisionWorld {
    * Used when placing the player (spawn, load) so they never start embedded in a floor.
    */
   resolveSpawnY(x: number, y: number, hw: number, height: number): number {
-    let feet = Math.max(y, this.groundAt(x, hw));
+    let feet = Math.max(y, this.groundAt(x, hw, y));
     for (let iter = 0; iter < 8; iter++) {
       let moved = false;
       for (const c of this.query(x - hw, x + hw)) {
@@ -85,9 +87,19 @@ export class CollisionWorld {
     return feet;
   }
 
-  /** Highest terrain point under a body of half-width `hw` centred at x. */
-  groundAt(x: number, hw: number): number {
+  /**
+   * Highest terrain point under a body of half-width `hw` centred at x.
+   * Bodies far below the surface (underground levels) ignore the terrain entirely.
+   */
+  groundAt(x: number, hw: number, feetY?: number): number {
     const t = this.terrain;
-    return Math.max(t.heightAt(x - hw * 0.8), t.heightAt(x), t.heightAt(x + hw * 0.8));
+    const h = Math.max(t.heightAt(x - hw * 0.8), t.heightAt(x), t.heightAt(x + hw * 0.8));
+    if (feetY !== undefined && feetY < h - UNDERGROUND_DEPTH) return -Infinity;
+    return h;
+  }
+
+  /** True when y is in an underground level beneath the terrain at x. */
+  isUnderground(x: number, y: number): boolean {
+    return y < this.terrain.heightAt(x) - UNDERGROUND_DEPTH;
   }
 }

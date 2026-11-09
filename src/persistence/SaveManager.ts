@@ -74,10 +74,10 @@ export class SaveManager {
   }
 
   /** Info for the Continue button, or the reason a save exists but can't be used. */
-  async summary(): Promise<{ summary: { savedAt: number; location: string; region: string; playTime: number } | null; problem: string | null }> {
+  async summary(): Promise<{ summary: { savedAt: number; location: string; region: string; playTime: number; day: number } | null; problem: string | null }> {
     const r = await this.load();
     if (r.ok) {
-      return { summary: { savedAt: r.data.savedAt, location: r.data.meta.location, region: r.data.meta.region, playTime: r.data.playTime }, problem: null };
+      return { summary: { savedAt: r.data.savedAt, location: r.data.meta.location, region: r.data.meta.region, playTime: r.data.playTime, day: r.data.meta.day }, problem: null };
     }
     const problem =
       r.reason === 'none'

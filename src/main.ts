@@ -22,7 +22,7 @@ async function boot(): Promise<void> {
     await game.init();
   } catch (e) {
     console.error(e);
-    game.ui.loading.error(`Something went wrong while starting the game: ${e instanceof Error ? e.message : String(e)}`);
+    game.loading.error(`Something went wrong while starting the game: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 

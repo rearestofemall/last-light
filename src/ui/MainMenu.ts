@@ -30,7 +30,7 @@ export class MainMenu {
         this.list,
         this.notice,
       ),
-      h('footer', { class: 'menu__footer' }, 'v0.1 — Milestone 1 · Verdant Woods'),
+      h('footer', { class: 'menu__footer' }, 'v1.0'),
     );
     root.append(this.el);
   }
@@ -53,7 +53,7 @@ export class MainMenu {
     const items: HTMLElement[] = [];
     if (summary) {
       const where = summary.location || summary.region || 'The wilderness';
-      items.push(menuButton(this.events, 'Continue', () => void this.api.continueGame(), { sub: `${where} · ${formatPlayTime(summary.playTime)} · ${timeAgo(summary.savedAt)}`, variant: 'is-primary' }));
+      items.push(menuButton(this.events, 'Continue', () => void this.api.continueGame(), { sub: `Day ${summary.day} · ${where} · ${formatPlayTime(summary.playTime)} · ${timeAgo(summary.savedAt)}`, variant: 'is-primary' }));
     }
     items.push(
       menuButton(this.events, 'New Game', async () => {

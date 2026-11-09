@@ -1,8 +1,8 @@
 import { Noise } from '../core/noise';
 import { lerp, smoothstep } from '../core/math';
-import { FLATTEN, REGIONS, RIDGES, RIVERS, type RiverDef, regionAt } from './WorldDef';
+import { FLATTEN, REGIONS, RIDGES, RIVERS, type RiverDef, regionAt, regionWeight } from './WorldDef';
 
-export type Surface = 'grass' | 'dirt' | 'rock' | 'wood' | 'water' | 'snow' | 'sand' | 'metal';
+export type Surface = 'grass' | 'dirt' | 'rock' | 'wood' | 'water' | 'snow' | 'sand' | 'metal' | 'ice';
 
 export interface WaterSample {
   surfaceY: number;
@@ -116,6 +116,9 @@ export class Terrain {
     if (z < 0) {
       const dz = Math.max(0, az - PLANE_BAND);
       h += band * (2 + dz * 0.075) * this.d.fbm2(x * 0.022, z * 0.025, 3);
+      // The coast falls away beneath the sea behind the beach.
+      const coast = regionWeight('coast', x, 60);
+      if (coast > 0) h -= coast * smoothstep(-8, -30, z) * 10;
     } else {
       h += band * 0.8 * this.d.fbm2(x * 0.05, z * 0.05, 2);
     }
@@ -147,7 +150,7 @@ export class Terrain {
 
   waterAt(x: number): WaterSample | null {
     for (const r of RIVERS) {
-      if (Math.abs(x - r.x) > r.width / 2 + r.bank) continue;
+      if (r.frozen || Math.abs(x - r.x) > r.width / 2 + r.bank) continue;
       const surfaceY = this.riverWaterY(r);
       const ground = this.heightAt(x);
       if (surfaceY > ground) return { surfaceY, depth: surfaceY - ground, river: r };
@@ -176,9 +179,11 @@ export class Terrain {
 
   surfaceAt(x: number): Surface {
     if (this.waterAt(x)) return 'water';
-    for (const r of RIVERS) if (this.riverFactor(r, x, 0) > 0.25) return 'sand';
+    for (const r of RIVERS) if (this.riverFactor(r, x, 0) > 0.25) return r.frozen ? 'ice' : 'sand';
     const reg = regionAt(x).id;
     if (reg === 'frost') return 'snow';
+    if (reg === 'city') return 'rock';
+    if (reg === 'coast') return this.pathAmount(x) > 0.3 ? 'sand' : 'grass';
     if (this.onRidge(x)) return 'rock';
     return this.pathAmount(x) > 0.5 ? 'dirt' : 'grass';
   }

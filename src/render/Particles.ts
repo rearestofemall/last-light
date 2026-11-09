@@ -68,6 +68,14 @@ export class Particles {
     this.points.renderOrder = 10;
   }
 
+  /** Pollen by day becomes faint fireflies at night. */
+  setNight(darkness: number): void {
+    const u = this.material.uniforms;
+    u.uColor.value.setRGB(1, 0.94 - darkness * 0.1, 0.78 - darkness * 0.35);
+    u.uOpacity.value = 0.5 + darkness * 0.5;
+    u.uSize.value = 5 + darkness * 2;
+  }
+
   setCount(count: number): void {
     this.points.geometry.setDrawRange(0, count);
   }

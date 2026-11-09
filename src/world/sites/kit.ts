@@ -2,7 +2,11 @@ import * as THREE from 'three';
 import type { GameEventBus } from '../../core/events';
 import type { CollisionWorld, Collider } from '../../physics/CollisionWorld';
 import type { InteractionSystem } from '../../interaction/InteractionSystem';
-import { paperTexture, plankTexture, shingleTexture, stoneTexture } from '../../render/textures';
+import type { ContainerRegistry, Inventory } from '../../inventory/Inventory';
+import type { ToolKind } from '../../inventory/items';
+import { fireInteractable } from '../../building/BuildSystem';
+import { type LightKind, type LightSource, type LightSystem, makeLight } from '../../lighting/LightSystem';
+import { paperTexture, plankTexture, shingleTexture, stoneTexture, worldUvBox } from '../../render/textures';
 import type { StoryState } from '../../story/StoryState';
 import { INSPECT } from '../../story/notes';
 import type { Surface, Terrain } from '../Terrain';
@@ -23,6 +27,13 @@ export interface SiteMaterials {
   concrete: THREE.MeshStandardMaterial;
   rock: THREE.MeshStandardMaterial;
   bone: THREE.MeshStandardMaterial;
+  glass: THREE.MeshStandardMaterial;
+  rug: THREE.MeshStandardMaterial;
+  brick: THREE.MeshStandardMaterial;
+  white: THREE.MeshStandardMaterial;
+  red: THREE.MeshStandardMaterial;
+  tile: THREE.MeshStandardMaterial;
+  books: THREE.MeshStandardMaterial[];
 }
 
 export function createSiteMaterials(): SiteMaterials {
@@ -43,6 +54,13 @@ export function createSiteMaterials(): SiteMaterials {
     concrete: std({ color: 0x9a978f, roughness: 0.95 }),
     rock: std({ color: 0x7a766d, roughness: 0.95, flatShading: true }),
     bone: std({ color: 0xd8cfb8, roughness: 0.8 }),
+    glass: std({ color: 0x1d2a30, roughness: 0.2, metalness: 0.3 }),
+    rug: std({ color: 0x6e3a2a, roughness: 1 }),
+    brick: std({ map: stoneTexture(), color: 0xb46f55 }),
+    white: std({ color: 0xe9e6de, roughness: 0.7 }),
+    red: std({ color: 0xa8382c, roughness: 0.7 }),
+    tile: std({ map: stoneTexture(), color: 0xd6d3c8, roughness: 0.6 }),
+    books: [0x6b4b2e, 0x3f5a6b, 0x7a6a3a, 0x5a3a3a].map((c) => std({ color: c })),
   };
 }
 
@@ -58,6 +76,38 @@ export interface Fadeable {
   opacity: number;
 }
 
+/** Interior volumes: count as full shelter (no rain, no wind). */
+export interface Interior {
+  x0: number;
+  x1: number;
+  y0: number;
+  y1: number;
+}
+
+/** Something in the world that changes once a story flag is set (rockslide cleared, etc.). */
+export interface Gate {
+  flag: string;
+  apply(): void;
+  applied?: boolean;
+}
+
+export interface SiteHost {
+  /** Fade out, move the player, fade in. */
+  travel(x: number, y: number, label?: string): void;
+  hasTool(kind: ToolKind): boolean;
+  wearTool(kind: ToolKind): void;
+  beginWork(): boolean;
+  startEnding(): void;
+  openCrafting(): void;
+}
+
+/** A fixed crafting station placed by a site (e.g. the hardware store's workbench). */
+export interface SiteStation {
+  x: number;
+  y: number;
+  kind: 'workbench';
+}
+
 export interface SiteContext {
   terrain: Terrain;
   collision: CollisionWorld;
@@ -67,6 +117,15 @@ export interface SiteContext {
   group: THREE.Group;
   mats: SiteMaterials;
   fadeables: Fadeable[];
+  interiors: Interior[];
+  gates: Gate[];
+  containers: ContainerRegistry;
+  lights: LightSystem;
+  inventory: Inventory;
+  host: SiteHost;
+  stations: SiteStation[];
+  /** Animated non-player characters. */
+  npcs: { update(dt: number): void }[];
 }
 
 export function mesh(geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number, parent: THREE.Object3D, cast = true): THREE.Mesh {
@@ -169,4 +228,65 @@ export function signTexture(lines: { text: string; size: number; color?: string 
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 4;
   return t;
+}
+
+/** A searchable container with fixed starting loot (contents persist in saves). */
+export function lootCrate(ctx: SiteContext, id: string, x: number, y: number, z: number, title: string, loot: [string, number][], size = 8, visual = true): void {
+  ctx.containers.register(id, title, size, loot);
+  if (visual) {
+    const m = mesh(worldUvBox(0.8, 0.7, 0.7, 0.8), ctx.mats.woodDark, x, y + 0.35, z, ctx.group);
+    m.rotation.y = 0.15;
+    mesh(new THREE.BoxGeometry(0.84, 0.06, 0.74), ctx.mats.metal, x, y + 0.5, z, ctx.group).rotation.y = 0.15;
+  }
+  ctx.interactions.add({
+    id,
+    x,
+    y: y + 0.6,
+    radius: 1.3,
+    verb: 'Search',
+    label: title.toLowerCase(),
+    prompt: () => {
+      const inv = ctx.containers.get(id)?.inv;
+      const empty = inv ? inv.slots.every((s) => !s) : true;
+      return `Search ${title.toLowerCase()}${empty ? ' (empty)' : ''}`;
+    },
+    onInteract: () => {
+      ctx.events.emit('sfx', { name: 'chest', x });
+      ctx.events.emit('container:open', { id, title });
+    },
+  });
+}
+
+/** A fixed, refuelable light: fire barrels, oil lamps. Lit at start if fuel is given. */
+export function fixedLight(ctx: SiteContext, id: string, kind: LightKind, x: number, y: number, z: number, fuel: number, lit = true): LightSource {
+  const light = makeLight(id, kind, x, y, z);
+  light.fuel = fuel;
+  light.on = lit && fuel > 0;
+  light.sheltered = true;
+  if (kind === 'barrel') {
+    mesh(new THREE.CylinderGeometry(0.4, 0.38, 0.95, 12, 1, true), ctx.mats.rust, x, y - 0.5, z, ctx.group).material = ctx.mats.rust;
+    mesh(new THREE.CylinderGeometry(0.36, 0.36, 0.05, 12), ctx.mats.charcoal, x, y - 0.1, z, ctx.group, false);
+    light.sheltered = false;
+  }
+  ctx.lights.add(light);
+  ctx.interactions.add(fireInteractable(id, light, x, y + 0.2, ctx.inventory, ctx.lights, ctx.events));
+  return light;
+}
+
+/** A pair of linked entrances (stairs, hatches, ladders) that move the player between levels. */
+export function passage(ctx: SiteContext, id: string, a: { x: number; y: number; label: string }, b: { x: number; y: number; label: string }): void {
+  const link = (from: typeof a, to: typeof b, k: string) =>
+    ctx.interactions.add({
+      id: `${id}-${k}`,
+      x: from.x,
+      y: from.y + 0.9,
+      radius: 1.4,
+      verb: '',
+      label: '',
+      priority: 0.2,
+      prompt: () => from.label,
+      onInteract: () => ctx.host.travel(to.x, to.y),
+    });
+  link(a, b, 'a');
+  link(b, a, 'b');
 }

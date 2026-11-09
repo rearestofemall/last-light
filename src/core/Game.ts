@@ -1,19 +1,14 @@
 import * as THREE from 'three';
 import { GameAudio } from '../audio/GameAudio';
-import { InteractionSystem } from '../interaction/InteractionSystem';
+import { Session } from '../gameplay/Session';
 import { SaveManager } from '../persistence/SaveManager';
-import { type SaveData, SAVE_VERSION } from '../persistence/schema';
-import { PlayerController } from '../player/PlayerController';
-import { PlayerModel } from '../player/PlayerModel';
 import { CameraRig } from '../render/CameraRig';
 import { Environment } from '../render/Environment';
 import { Renderer } from '../render/Renderer';
-import { StoryState } from '../story/StoryState';
-import { Tutorial } from '../story/Tutorial';
 import type { GameApi, Projector, SaveSummary } from '../ui/types';
+import { LoadingScreen } from '../ui/LoadingScreen';
 import { UIManager } from '../ui/UIManager';
-import { World } from '../world/World';
-import { locationAt, PLAYABLE, regionAt, SPAWN_X, WORLD_SEED } from '../world/WorldDef';
+import { PLAYABLE, regionAt, SPAWN_X, WORLD_SEED } from '../world/WorldDef';
 import { createEventBus, type GameEventBus } from './events';
 import { Input } from './Input';
 import { Loop } from './Loop';
@@ -26,8 +21,8 @@ const AUTOSAVE_INTERVAL = 90;
 const nextFrame = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
 
 /**
- * Top-level orchestrator: owns every system, the state machine (menu / playing / paused)
- * and the order in which systems update. Systems talk to each other through the EventBus.
+ * The application shell: boot, state machine (menu / playing / paused), persistence,
+ * camera and rendering. All gameplay lives in Session.
  */
 export class Game implements GameApi {
   readonly settings = new Settings();
@@ -35,39 +30,32 @@ export class Game implements GameApi {
   readonly input = new Input();
   readonly renderer: Renderer;
   readonly rig = new CameraRig();
-  readonly interactions: InteractionSystem;
-  readonly story: StoryState;
   readonly saves = new SaveManager((x) => clamp(x, PLAYABLE.min + 1, PLAYABLE.max - 1));
   readonly audio: GameAudio;
-  readonly ui: UIManager;
-  private world!: World;
+  ui!: UIManager;
+  readonly loading: LoadingScreen;
+  session!: Session;
   private env!: Environment;
-  private player!: PlayerController;
-  private model!: PlayerModel;
-  private tutorial: Tutorial;
   private loop: Loop;
   state: GameState = 'loading';
-  private playTime = 0;
   private autosaveTimer = AUTOSAVE_INTERVAL;
-  private locationId: string | null = null;
-  private regionId: string | null = null;
   private menuTime = 0;
   private saving = false;
   private projVec = new THREE.Vector3();
+  private frameCount = 0;
 
-  constructor(canvas: HTMLCanvasElement, uiRoot: HTMLElement) {
+  constructor(
+    canvas: HTMLCanvasElement,
+    private uiRoot: HTMLElement,
+  ) {
+    this.loading = new LoadingScreen(uiRoot);
     this.renderer = new Renderer(canvas, this.settings);
     this.renderer.addResizeListener(() => this.rig.setAspect(this.renderer.aspect));
     this.rig.setAspect(this.renderer.aspect);
     this.rig.bounds = { min: PLAYABLE.min, max: PLAYABLE.max };
-    this.interactions = new InteractionSystem(this.events);
-    this.story = new StoryState(this.events);
-    this.tutorial = new Tutorial(this.events, this.story);
     this.audio = new GameAudio(this.events, this.settings);
-    this.ui = new UIManager(uiRoot, this.events, this);
     this.loop = new Loop({ update: (dt) => this.update(dt), render: (a, dt) => this.render(a, dt) });
 
-    // Any user gesture unlocks audio (browser autoplay policy).
     const unlock = () => this.audio.engine.unlock();
     window.addEventListener('pointerdown', unlock);
     window.addEventListener('keydown', unlock);
@@ -75,15 +63,11 @@ export class Game implements GameApi {
     this.settings.onChange((s, changed) => {
       this.renderer.applySettings();
       this.env?.applySettings();
-      if (changed.includes('quality')) this.world?.applySettings();
-      this.tutorial.enabled = s.showHints;
-    });
-    this.tutorial.enabled = this.settings.get().showHints;
-
-    this.ui.reader.onClose = () => this.input.flush();
-    this.events.on('player:land', (e) => {
-      this.model?.land(e.impact);
-      if (e.impact > 17) this.rig.addShake((e.impact - 17) / 12);
+      if (changed.includes('quality') && this.session) {
+        this.session.world.applySettings();
+        this.session.lights.setPoolSize(this.settings.profile.lightPool);
+      }
+      if (this.session) this.session.tutorial.enabled = s.showHints;
     });
     window.addEventListener('blur', () => this.state === 'playing' && this.pause());
     document.addEventListener('visibilitychange', () => {
@@ -95,33 +79,42 @@ export class Game implements GameApi {
   }
 
   async init(): Promise<void> {
-    const L = this.ui.loading;
-    L.progress(0.1, 'Opening your journal…');
-    await this.saves.init();
-    await nextFrame();
-
-    L.progress(0.3, 'Growing the forest…');
-    await nextFrame();
+    const progress = (f: number, t: string) => this.loading.progress(f, t);
     const scene = this.renderer.scene;
-    this.env = new Environment(scene, this.rig, this.settings, WORLD_SEED, PLAYABLE.min, PLAYABLE.max);
-    this.world = new World(scene, this.settings, this.events, this.interactions, this.story);
-    this.player = new PlayerController(this.world.collision, this.events, SPAWN_X, 0);
-    this.player.placeAt(SPAWN_X);
-    this.model = new PlayerModel();
-    scene.add(this.model.root);
-
-    L.progress(0.6, 'Kindling…');
+    progress(0.08, 'Opening your journal…');
     await nextFrame();
-    this.rig.snapTo(SPAWN_X + 10, this.player.body.y + 1);
-    this.world.preload(this.rig.focus.x);
+    this.env = new Environment(scene, this.rig, this.settings, this.renderer.renderer, WORLD_SEED, PLAYABLE.min, PLAYABLE.max);
+    await this.saves.init();
+    progress(0.25, 'Growing the forest, raising the city…');
+    await nextFrame();
+    await nextFrame();
+    this.session = new Session(scene, this.settings, this.events, this.input, this.rig);
+    this.ui = new UIManager(this.uiRoot, this.events, this, this.session, () => this.session.world.terrain, this.loading);
+    this.session.attachUI(this.ui);
+    this.session.captureInitialState();
+    this.session.tutorial.enabled = this.settings.get().showHints;
+    this.ui.reader.onClose = () => this.input.flush();
+    this.ui.backpack.onClose = () => this.input.flush();
+    this.ui.map.onClose = () => this.input.flush();
+    this.ui.journal.onClose = () => this.input.flush();
+    this.events.on('player:land', (e) => {
+      if (e.impact > 17) this.rig.addShake((e.impact - 17) / 12);
+    });
+    this.events.on('player:damaged', (e) => this.rig.addShake(Math.min(0.6, e.amount / 25)));
 
-    L.progress(0.85, 'Warming up…');
+    progress(0.55, 'Kindling…');
+    await nextFrame();
+    this.session.newGame();
+    this.rig.snapTo(SPAWN_X + 10, this.session.player.body.y + 1);
+    this.session.world.preload(this.rig.focus.x);
+
+    progress(0.85, 'Warming up…');
     await nextFrame();
     this.renderer.renderer.compile(scene, this.rig.camera);
 
-    L.progress(1, '');
+    progress(1, '');
     await this.enterMenu();
-    L.hide();
+    this.ui.loading.hide();
     this.loop.start();
   }
 
@@ -135,10 +128,7 @@ export class Game implements GameApi {
   }
 
   async newGame(): Promise<void> {
-    this.story.reset();
-    this.playTime = 0;
-    this.player.placeAt(SPAWN_X);
-    this.player.facing = 1;
+    this.session.newGame();
     this.startPlaying();
     await this.saveGame(true);
   }
@@ -157,17 +147,17 @@ export class Game implements GameApi {
       else await this.ui.menu.refresh();
       return;
     }
-    this.applySave(r.data);
+    this.session.restore(r.data);
     this.startPlaying();
     if (r.recoveredFromBackup) this.events.emit('toast', { text: 'Your last save was damaged — restored from the backup.', kind: 'warn', duration: 6 });
   }
 
   async saveGame(silent = false): Promise<boolean> {
-    if (this.state === 'menu' || this.state === 'loading' || this.saving) return false;
+    if (this.state === 'menu' || this.state === 'loading' || this.saving || this.session.busy) return false;
     this.saving = true;
     if (!silent) this.events.emit('save:status', { state: 'saving' });
     try {
-      await this.saves.save(this.snapshot());
+      await this.saves.save(this.session.snapshot());
       this.autosaveTimer = AUTOSAVE_INTERVAL;
       this.events.emit('save:status', { state: 'saved' });
       return true;
@@ -203,9 +193,11 @@ export class Game implements GameApi {
 
   private async enterMenu(): Promise<void> {
     this.state = 'menu';
+    this.session.toggleBuild(false);
     this.ui.hud.setVisible(false);
     this.ui.hud.reset();
-    this.player.placeAt(SPAWN_X);
+    this.session.newGame();
+    this.session.clock.time = 1 + 17.2 / 24; // golden hour behind the menu
     this.menuTime = 0;
     await this.ui.menu.open();
   }
@@ -218,74 +210,32 @@ export class Game implements GameApi {
     this.state = 'playing';
     this.input.reset();
     this.autosaveTimer = AUTOSAVE_INTERVAL;
-    this.locationId = null;
-    this.regionId = null;
-    this.rig.snapTo(this.player.body.x, this.player.body.y);
-    this.world.preload(this.rig.focus.x);
-    this.tutorial.reset(this.player.body.x);
-    this.trackLocation(true);
-  }
-
-  private snapshot(): SaveData {
-    const b = this.player.body;
-    return {
-      version: SAVE_VERSION,
-      savedAt: Date.now(),
-      playTime: this.playTime,
-      player: { x: b.x, y: b.y, facing: this.player.facing },
-      world: { seed: WORLD_SEED, time: this.env.time },
-      story: this.story.serialize(),
-      meta: { location: locationAt(b.x)?.name ?? '', region: regionAt(b.x).name },
-    };
-  }
-
-  private applySave(d: SaveData): void {
-    this.story.deserialize(d.story);
-    this.playTime = d.playTime;
-    const ground = this.world.collision.groundAt(d.player.x, this.player.body.halfWidth);
-    this.player.placeAt(d.player.x, Math.max(d.player.y, ground) + 0.02);
-    this.player.facing = d.player.facing;
-  }
-
-  private trackLocation(force = false): void {
-    const x = this.player.body.x;
-    const region = regionAt(x);
-    const loc = locationAt(x);
-    const regionChanged = region.id !== this.regionId;
-    if (!force && !regionChanged && (loc?.id ?? null) === this.locationId) return;
-    if (loc && loc.id !== this.locationId) {
-      const first = this.story.discover(loc.id);
-      this.events.emit('location:discovered', { id: loc.id, name: loc.name, region: region.name, first });
-      if (first || force) this.ui.hud.showBanner(region.name, loc.name);
-    } else if (regionChanged || force) {
-      this.ui.hud.showBanner(region.tagline, region.name);
-    }
-    this.locationId = loc?.id ?? this.locationId;
-    if (!loc) this.locationId = null;
-    this.regionId = region.id;
-    this.ui.hud.setLocation(region.name, loc?.name ?? '');
+    const b = this.session.player.body;
+    this.rig.snapTo(b.x, b.y);
+    this.session.world.preload(this.rig.focus.x);
+    this.session.begin();
   }
 
   // ---------------------------------------------------------------- Loop
   private update(dt: number): void {
+    const s = this.session;
     if (this.input.consumeRaw('pause')) {
-      if (!this.ui.back()) {
+      if (s.build.active && !this.ui.modalOpen) s.toggleBuild(false);
+      else if (!this.ui.back()) {
         if (this.state === 'playing') this.pause();
         else if (this.state === 'paused') this.resume();
       }
     }
     if (this.ui.reader.visible && this.input.consumeRaw('interact')) this.ui.reader.close();
+    if (this.state === 'playing') s.handleMenus();
 
-    const active = this.state === 'playing' && !this.ui.modalOpen;
+    const active = this.state === 'playing' && !this.ui.modalOpen && !s.busy;
     this.input.gameplayEnabled = active;
-    if (!active) return;
-
-    this.player.update(dt, this.input);
-    const b = this.player.body;
-    this.interactions.update(b.x, b.y, this.input, true);
-    this.trackLocation();
-    this.tutorial.update(dt, this.player);
-    this.playTime += dt;
+    if (!active) {
+      this.input.dropGameplayLatches();
+      return;
+    }
+    s.update(dt);
     this.autosaveTimer -= dt;
     if (this.autosaveTimer <= 0) {
       this.autosaveTimer = AUTOSAVE_INTERVAL;
@@ -299,27 +249,50 @@ export class Game implements GameApi {
   };
 
   private render(alpha: number, dt: number): void {
-    const playing = this.state === 'playing' || this.state === 'paused';
-    const simAlpha = this.state === 'playing' && !this.ui.modalOpen ? alpha : 1;
-    this.model.update(this.state === 'paused' ? 0 : dt, simAlpha, this.player);
+    const s = this.session;
+    const simRunning = this.state === 'playing' && !this.ui.modalOpen && !s.busy;
+    s.frame(dt, simRunning ? alpha : 1, this.state === 'paused');
     if (this.state === 'menu') {
       this.menuTime += dt;
+      s.clock.update(dt * 0.2);
       const x = 22 + 24 * Math.sin(this.menuTime * 0.045 - 0.4);
-      this.rig.pan(dt, x, this.world.terrain.heightAt(x) + 3.2);
+      this.rig.pan(dt, x, s.world.terrain.heightAt(x) + 3.2);
       this.input.wheelDelta = 0;
     } else if (this.state === 'playing') {
-      if (this.input.wheelDelta !== 0) {
+      if (this.input.wheelDelta !== 0 && !this.input.held('sprint')) {
         this.rig.zoom(this.input.wheelDelta);
         this.input.wheelDelta = 0;
       }
-      const p = this.model.root.position;
-      this.rig.follow(dt, p.x, p.y, this.player.body.vx);
+      const p = s.model.root.position;
+      this.rig.follow(dt, p.x, p.y, s.player.body.vx);
     }
-    const p = this.model.root.position;
-    this.world.update(dt, this.rig.focus.x, p.x, p.y);
-    this.env.update(dt, this.renderer.aspect, this.renderer.pixelRatio);
-    this.audio.update(dt, this.rig.focus.x, this.env.time, playing && this.state === 'playing');
+    const p = s.model.root.position;
+    s.world.update(dt, this.rig.focus.x, p.x, p.y);
+    if (this.state === 'menu') s.lights.update(dt, this.rig.focus.x, this.rig.focus.y, 0, 0.3);
+    const envIn = s.environment(this.rig.focus.x, this.rig.focus.y);
+    this.env.update(dt, this.renderer.aspect, this.renderer.pixelRatio, envIn);
+    if (this.state !== 'menu') this.ui.hud.frame(s.hudFrame(this.env.atmosphere.darkness));
+    this.audio.update(dt, {
+      x: this.rig.focus.x,
+      time: this.env.time,
+      playing: this.state === 'playing',
+      wind: s.weather.wind,
+      rain: envIn.interior ? 0 : s.weather.rain,
+      night: 1 - s.clock.daylight,
+      region: regionAt(this.rig.focus.x).id,
+      underground: envIn.interior,
+      fireNear: s.lights.heatAt(p.x, p.y + 0.8),
+      danger: s.wildlife.threat,
+    });
     this.ui.update(dt, this.project, this.settings.get().showFps ? this.loop.fps : null);
+
+    // Potato mode: shadows update every N frames; resolution adapts to hold the frame rate.
+    this.frameCount++;
+    const prof = this.settings.profile;
+    const sm = this.renderer.renderer.shadowMap;
+    sm.autoUpdate = false;
+    if (this.frameCount % prof.shadowInterval === 0) sm.needsUpdate = true;
+    this.renderer.adapt(dt);
     this.renderer.render(this.rig.camera);
   }
 }

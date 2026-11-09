@@ -12,6 +12,8 @@ export interface GameSettings {
   muted: boolean;
   showFps: boolean;
   showHints: boolean;
+  /** Lower the internal resolution automatically when the frame rate drops. */
+  adaptiveResolution: boolean;
 }
 
 export interface QualityProfile {
@@ -22,12 +24,16 @@ export interface QualityProfile {
   particles: number;
   chunkRadius: number;
   standardMaterials: boolean;
+  /** Point lights available for fires/torches (fixed count keeps shaders stable). */
+  lightPool: number;
+  /** Update the sun's shadow map every N frames. */
+  shadowInterval: number;
 }
 
 export const QUALITY_PROFILES: Record<QualityLevel, QualityProfile> = {
-  low: { shadowMapSize: 1024, maxPixelRatio: 1, vegetationDensity: 0.55, grassDensity: 0.35, particles: 80, chunkRadius: 2, standardMaterials: false },
-  medium: { shadowMapSize: 2048, maxPixelRatio: 1.5, vegetationDensity: 0.8, grassDensity: 0.7, particles: 180, chunkRadius: 3, standardMaterials: true },
-  high: { shadowMapSize: 4096, maxPixelRatio: 2, vegetationDensity: 1, grassDensity: 1, particles: 320, chunkRadius: 3, standardMaterials: true },
+  low: { shadowMapSize: 1024, maxPixelRatio: 1, vegetationDensity: 0.6, grassDensity: 0.4, particles: 90, chunkRadius: 2, standardMaterials: false, lightPool: 3, shadowInterval: 3 },
+  medium: { shadowMapSize: 2048, maxPixelRatio: 1.5, vegetationDensity: 0.8, grassDensity: 0.7, particles: 180, chunkRadius: 3, standardMaterials: true, lightPool: 4, shadowInterval: 2 },
+  high: { shadowMapSize: 4096, maxPixelRatio: 2, vegetationDensity: 1, grassDensity: 1, particles: 320, chunkRadius: 3, standardMaterials: true, lightPool: 6, shadowInterval: 1 },
 };
 
 export const DEFAULT_SETTINGS: GameSettings = {
@@ -41,6 +47,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   muted: false,
   showFps: false,
   showHints: true,
+  adaptiveResolution: true,
 };
 
 const KEY = 'last-light:settings';

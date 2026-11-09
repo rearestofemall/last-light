@@ -1,145 +1,233 @@
 import * as THREE from 'three';
 import { worldUvBox } from '../../render/textures';
-import { fadeMaterial, type Fadeable, mesh, oneway, type SiteContext, solid } from './kit';
+import { fadeMaterial, type Fadeable, mesh, oneway, type SiteContext, type SiteMaterials, solid } from './kit';
+
+export type HouseStyle = 'timber' | 'cottage' | 'brick' | 'concrete' | 'station' | 'hut';
 
 export interface CabinSpec {
   x: number;
   width: number;
-  /** Wall height above the floor. */
+  /** Storey height above each floor. */
   height: number;
   zBack: number;
   zFront: number;
+  floors?: number;
+  style?: HouseStyle;
+  roof?: 'gable' | 'flat';
   loft?: { x0: number; x1: number; height: number };
+  /** Override ground height (e.g. for buildings set into a slope). */
+  ground?: number;
+  /** Omit the doorway on one side (e.g. tower against a cliff). */
+  noDoor?: 'left' | 'right';
 }
 
 export interface CabinResult {
   group: THREE.Group;
-  /** World y of the floor surface. */
+  /** World y of the ground-floor surface. */
   floorY: number;
-  /** World x of the cabin centre. */
+  /** World x of the centre. */
   x: number;
+  /** World y of each storey's floor. */
+  storeys: number[];
 }
 
 const FLOOR = 0.4;
 const DOOR_H = 2.35;
 const DOOR_HALF = 1.0;
 
+const styleCache = new Map<string, { wall: THREE.Material; trim: THREE.Material; roof: THREE.Material }>();
+
+function styleMats(mats: SiteMaterials, style: HouseStyle) {
+  const k = style;
+  let s = styleCache.get(k);
+  if (s) return s;
+  const tint = (m: THREE.MeshStandardMaterial, c: number) => {
+    const n = m.clone();
+    n.color.setHex(c);
+    return n;
+  };
+  switch (style) {
+    case 'cottage':
+      s = { wall: tint(mats.wood, 0xf2ece0), trim: tint(mats.woodDark, 0x6a7f8c), roof: tint(mats.roof, 0xa89488) };
+      break;
+    case 'brick':
+      s = { wall: tint(mats.stone, 0xb46f55), trim: tint(mats.concrete, 0x8d8a83), roof: mats.concrete };
+      break;
+    case 'concrete':
+      s = { wall: tint(mats.concrete, 0xb2aea4), trim: tint(mats.concrete, 0x77746d), roof: tint(mats.concrete, 0x6c6a66) };
+      break;
+    case 'station':
+      s = { wall: tint(mats.metal, 0xa9b0b5), trim: tint(mats.metal, 0x58616a), roof: tint(mats.metal, 0x7d868e) };
+      break;
+    case 'hut':
+      s = { wall: tint(mats.wood, 0x9f8466), trim: mats.woodDark, roof: tint(mats.roof, 0xd9dde2) };
+      break;
+    default:
+      s = { wall: mats.wood, trim: mats.woodDark, roof: mats.roof };
+  }
+  styleCache.set(k, s);
+  return s;
+}
+
 /**
- * A cut-away timber cabin straddling the gameplay plane. Doorways in the side walls let the
- * player walk through; the front wall and front roof slope fade out while the player is inside.
+ * A cut-away building straddling the gameplay plane. Doorways in the side walls let the
+ * player walk through; internal stair ledges link storeys. The front wall and roof fade
+ * out while the player is inside.
  */
 export function buildCabin(ctx: SiteContext, spec: CabinSpec): CabinResult {
   const { mats, terrain } = ctx;
-  const g = terrain.heightAt(spec.x);
+  const g = spec.ground ?? terrain.heightAt(spec.x);
   const group = new THREE.Group();
   group.position.set(spec.x, g, 0);
   ctx.group.add(group);
+  const st = styleMats(mats, spec.style ?? 'timber');
 
   const W = spec.width;
   const H = spec.height;
+  const nf = spec.floors ?? 1;
+  const TH = H * nf;
   const zb = spec.zBack;
   const zf = spec.zFront;
   const D = zf - zb;
   const zc = (zf + zb) / 2;
   const fy = FLOOR;
+  const storeys: number[] = [];
+  for (let i = 0; i < nf; i++) storeys.push(g + fy + i * H);
 
   // Foundation + floor
-  for (const sx of [-1, 1]) {
-    for (const z of [zb + 0.4, zf - 0.4]) mesh(worldUvBox(0.7, 1.2, 0.7), mats.stone, sx * (W / 2 - 0.35), -0.4, z, group);
-  }
+  for (const sx of [-1, 1]) for (const z of [zb + 0.4, zf - 0.4]) mesh(worldUvBox(0.7, 1.4, 0.7), mats.stone, sx * (W / 2 - 0.35), -0.5, z, group);
   mesh(worldUvBox(W, 0.3, D, 1.4), mats.woodDark, 0, fy - 0.15, zc, group);
-  // Steps at both doors
-  for (const sx of [-1, 1]) mesh(worldUvBox(0.7, 0.2, 2.2), mats.woodDark, sx * (W / 2 + 0.35), 0.1, 0, group);
+  for (const sx of [-1, 1]) if (spec.noDoor !== (sx < 0 ? 'left' : 'right')) mesh(worldUvBox(0.7, 0.2, 2.2), mats.woodDark, sx * (W / 2 + 0.35), 0.1, 0, group);
+  solid(ctx, spec.x - W / 2, spec.x + W / 2, g - 3, g + fy, 'wood');
 
   // Back wall
-  mesh(worldUvBox(W, H, 0.25), mats.wood, 0, fy + H / 2, zb + 0.125, group);
-  // Back window (dark glass in a frame)
-  const win = new THREE.Group();
-  win.position.set(W * 0.18, fy + 1.9, zb + 0.27);
-  group.add(win);
-  mesh(new THREE.PlaneGeometry(1.4, 1.0), new THREE.MeshStandardMaterial({ color: 0x1d2a30, roughness: 0.2, metalness: 0.3 }), 0, 0, 0, win, false);
-  for (const [w, h, x, y] of [
-    [1.6, 0.12, 0, 0.56],
-    [1.6, 0.12, 0, -0.56],
-    [0.12, 1.2, 0.74, 0],
-    [0.12, 1.2, -0.74, 0],
-    [0.06, 1.0, 0, 0],
-  ] as const) {
-    mesh(new THREE.BoxGeometry(w, h, 0.08), mats.woodDark, x, y, 0.02, win);
+  mesh(worldUvBox(W, TH, 0.25), st.wall, 0, fy + TH / 2, zb + 0.125, group);
+  for (let i = 0; i < nf; i++) {
+    for (const wx of nf > 1 || W > 10 ? [-W * 0.25, W * 0.25] : [W * 0.18]) {
+      const win = new THREE.Group();
+      win.position.set(wx, fy + i * H + 1.9, zb + 0.27);
+      group.add(win);
+      mesh(new THREE.PlaneGeometry(1.4, 1.0), mats.glass, 0, 0, 0, win, false);
+      for (const [w, h, x, y] of [
+        [1.6, 0.12, 0, 0.56],
+        [1.6, 0.12, 0, -0.56],
+        [0.12, 1.2, 0.74, 0],
+        [0.12, 1.2, -0.74, 0],
+      ] as const) {
+        mesh(new THREE.BoxGeometry(w, h, 0.08), st.trim, x, y, 0.02, win);
+      }
+    }
   }
 
-  // Side walls with doorways at the gameplay plane
+  // Side walls with doorways on the ground floor (solid above).
   for (const sx of [-1, 1]) {
     const x = sx * (W / 2 - 0.125);
     const backLen = -DOOR_HALF - zb;
     const frontLen = zf - DOOR_HALF;
-    mesh(worldUvBox(0.25, H, backLen), mats.wood, x, fy + H / 2, zb + backLen / 2, group);
-    mesh(worldUvBox(0.25, H, frontLen), mats.wood, x, fy + H / 2, DOOR_HALF + frontLen / 2, group);
-    mesh(worldUvBox(0.25, H - DOOR_H, DOOR_HALF * 2), mats.wood, x, fy + DOOR_H + (H - DOOR_H) / 2, 0, group);
-    // Door leaf, swung open outward
+    const blocked = spec.noDoor === (sx < 0 ? 'left' : 'right');
+    if (blocked) {
+      mesh(worldUvBox(0.25, TH, D), st.wall, x, fy + TH / 2, zc, group);
+      solid(ctx, spec.x + x - 0.15, spec.x + x + 0.15, g + fy, g + fy + TH, 'wood');
+      continue;
+    }
+    mesh(worldUvBox(0.25, H, backLen), st.wall, x, fy + H / 2, zb + backLen / 2, group);
+    mesh(worldUvBox(0.25, H, frontLen), st.wall, x, fy + H / 2, DOOR_HALF + frontLen / 2, group);
+    mesh(worldUvBox(0.25, TH - DOOR_H, DOOR_HALF * 2), st.wall, x, fy + DOOR_H + (TH - DOOR_H) / 2, 0, group);
+    if (nf > 1) {
+      mesh(worldUvBox(0.25, TH - H, backLen), st.wall, x, fy + H + (TH - H) / 2, zb + backLen / 2, group);
+      mesh(worldUvBox(0.25, TH - H, frontLen), st.wall, x, fy + H + (TH - H) / 2, DOOR_HALF + frontLen / 2, group);
+    }
     const door = new THREE.Group();
     door.position.set(sx * (W / 2 + 0.05), fy, -DOOR_HALF);
     door.rotation.y = sx * (Math.PI - 0.12);
     group.add(door);
-    mesh(worldUvBox(0.08, DOOR_H - 0.05, DOOR_HALF * 2 - 0.1), mats.woodDark, 0, (DOOR_H - 0.05) / 2, DOOR_HALF - 0.05, door);
-    solid(ctx, spec.x + x - 0.15, spec.x + x + 0.15, g + fy + DOOR_H, g + fy + H, 'wood');
+    mesh(worldUvBox(0.08, DOOR_H - 0.05, DOOR_HALF * 2 - 0.1), st.trim, 0, (DOOR_H - 0.05) / 2, DOOR_HALF - 0.05, door);
+    solid(ctx, spec.x + x - 0.15, spec.x + x + 0.15, g + fy + DOOR_H, g + fy + TH, 'wood');
   }
 
-  // Front wall with two window openings — fades when inside.
-  const frontMat = fadeMaterial(mats.wood);
-  const postMat = fadeMaterial(mats.woodDark);
+  // Front wall with window openings — fades when inside.
+  const frontMat = fadeMaterial(st.wall);
+  const postMat = fadeMaterial(st.trim);
+  const roofMat = fadeMaterial(st.roof);
   const front = new THREE.Group();
   front.position.set(0, fy, zf - 0.1);
   group.add(front);
-  mesh(worldUvBox(W, 1.0, 0.2), frontMat, 0, 0.5, 0, front);
-  mesh(worldUvBox(W, H - 2.2, 0.2), frontMat, 0, 2.2 + (H - 2.2) / 2, 0, front);
-  const winW = 1.5;
-  const wins = [-W * 0.22, W * 0.24];
-  const edges = [-W / 2, ...wins.flatMap((c) => [c - winW / 2, c + winW / 2]), W / 2];
-  for (let i = 0; i < edges.length; i += 2) {
-    const w = edges[i + 1] - edges[i];
-    if (w > 0.01) mesh(worldUvBox(w, 1.2, 0.2), frontMat, (edges[i] + edges[i + 1]) / 2, 1.6, 0, front);
+  for (let i = 0; i < nf; i++) {
+    const y0 = i * H;
+    mesh(worldUvBox(W, 1.0, 0.2), frontMat, 0, y0 + 0.5, 0, front);
+    mesh(worldUvBox(W, H - 2.2, 0.2), frontMat, 0, y0 + 2.2 + (H - 2.2) / 2, 0, front);
+    const winW = 1.5;
+    const wins = W > 10 ? [-W * 0.3, 0, W * 0.3] : [-W * 0.22, W * 0.24];
+    const edges = [-W / 2, ...wins.flatMap((c) => [c - winW / 2, c + winW / 2]), W / 2];
+    for (let k = 0; k < edges.length; k += 2) {
+      const w = edges[k + 1] - edges[k];
+      if (w > 0.01) mesh(worldUvBox(w, 1.2, 0.2), frontMat, (edges[k] + edges[k + 1]) / 2, y0 + 1.6, 0, front);
+    }
+    for (const c of wins) mesh(new THREE.BoxGeometry(winW + 0.2, 0.1, 0.35), postMat, c, y0 + 1.02, 0.05, front);
   }
-  for (const c of wins) mesh(new THREE.BoxGeometry(winW + 0.2, 0.1, 0.35), postMat, c, 1.02, 0.05, front);
-  // Corner posts
   for (const sx of [-1, 1]) {
-    mesh(new THREE.CylinderGeometry(0.16, 0.18, H + 0.3, 7), postMat, sx * (W / 2), H / 2, 0.05, front);
-    mesh(new THREE.CylinderGeometry(0.16, 0.18, H + 0.3, 7), mats.woodDark, sx * (W / 2), fy + H / 2, zb + 0.1, group);
+    mesh(new THREE.CylinderGeometry(0.16, 0.18, TH + 0.3, 7), postMat, sx * (W / 2), TH / 2, 0.05, front);
+    mesh(new THREE.CylinderGeometry(0.16, 0.18, TH + 0.3, 7), st.trim, sx * (W / 2), fy + TH / 2, zb + 0.1, group);
   }
 
-  // Roof: gable along x. Front slope fades.
+  // Upper floors with stair ledges (alternating sides).
+  for (let i = 1; i < nf; i++) {
+    const y = fy + i * H;
+    const stairLeft = i % 2 === 1;
+    const gapX0 = stairLeft ? -W / 2 + 0.2 : W / 2 - 3.2;
+    const gapX1 = gapX0 + 3;
+    // Floor slab with a stairwell gap
+    const segs: [number, number][] = [
+      [-W / 2, gapX0],
+      [gapX1, W / 2],
+    ];
+    for (const [a, b] of segs) {
+      if (b - a < 0.05) continue;
+      mesh(worldUvBox(b - a, 0.22, D - 0.3, 1.4), mats.woodDark, (a + b) / 2, y - 0.11, zc, group);
+      oneway(ctx, spec.x + a, spec.x + b, g + y, 'wood');
+    }
+    // Stair ledges inside the gap
+    const steps = Math.ceil(H / 1.2);
+    for (let s = 1; s < steps; s++) {
+      const sy = y - H + s * (H / steps);
+      const sx0 = stairLeft ? gapX1 - (s / steps) * 3 - 1 : gapX0 + (s / steps) * 3;
+      mesh(worldUvBox(1, 0.18, 1.2, 0.8), mats.woodDark, sx0 + 0.5, sy - 0.09, -1.8, group);
+      oneway(ctx, spec.x + sx0, spec.x + sx0 + 1, g + sy, 'wood');
+    }
+  }
+
+  // Roof
+  const roofTop = fy + TH;
   const ridgeZ = (zb + zf) / 2;
-  const ridgeY = fy + H + 2.1;
-  const eave = 0.7;
-  const roofMat = fadeMaterial(mats.roof);
-  const slope = (z0: number, y0: number, z1: number, y1: number, mat: THREE.Material) => {
-    const len = Math.hypot(z1 - z0, y1 - y0);
-    const m = mesh(worldUvBox(W + 1.0, 0.16, len, 2), mat, 0, (y0 + y1) / 2, (z0 + z1) / 2, group);
-    m.rotation.x = Math.atan2(y1 - y0, z0 - z1);
-    return m;
-  };
-  slope(zf + eave, fy + H - 0.35, ridgeZ, ridgeY, roofMat);
-  slope(ridgeZ, ridgeY, zb - eave, fy + H - 0.35, mats.roof);
-  mesh(new THREE.CylinderGeometry(0.12, 0.12, W + 1.1, 6).rotateZ(Math.PI / 2), mats.woodDark, 0, ridgeY + 0.05, ridgeZ, group);
-  // Gable ends
-  const gableShape = new THREE.Shape();
-  gableShape.moveTo(zb, 0);
-  gableShape.lineTo(zf, 0);
-  gableShape.lineTo(ridgeZ, ridgeY - fy - H);
-  gableShape.closePath();
-  for (const sx of [-1, 1]) {
-    const geo = new THREE.ExtrudeGeometry(gableShape, { depth: 0.2, bevelEnabled: false });
-    geo.rotateY(-Math.PI / 2);
-    mesh(geo, mats.wood, sx * (W / 2) + 0.1, fy + H, 0, group);
+  if ((spec.roof ?? 'gable') === 'gable') {
+    const ridgeY = roofTop + 2.1;
+    const eave = 0.7;
+    const slope = (z0: number, y0: number, z1: number, y1: number, mat: THREE.Material) => {
+      const len = Math.hypot(z1 - z0, y1 - y0);
+      const m = mesh(worldUvBox(W + 1.0, 0.16, len, 2), mat, 0, (y0 + y1) / 2, (z0 + z1) / 2, group);
+      m.rotation.x = Math.atan2(y1 - y0, z0 - z1);
+    };
+    slope(zf + eave, roofTop - 0.35, ridgeZ, ridgeY, roofMat);
+    slope(ridgeZ, ridgeY, zb - eave, roofTop - 0.35, st.roof);
+    mesh(new THREE.CylinderGeometry(0.12, 0.12, W + 1.1, 6).rotateZ(Math.PI / 2), st.trim, 0, ridgeY + 0.05, ridgeZ, group);
+    const gableShape = new THREE.Shape();
+    gableShape.moveTo(zb, 0);
+    gableShape.lineTo(zf, 0);
+    gableShape.lineTo(ridgeZ, ridgeY - roofTop);
+    gableShape.closePath();
+    for (const sx of [-1, 1]) {
+      const geo = new THREE.ExtrudeGeometry(gableShape, { depth: 0.2, bevelEnabled: false });
+      geo.rotateY(-Math.PI / 2);
+      mesh(geo, st.wall, sx * (W / 2) + 0.1, roofTop, 0, group);
+    }
+  } else {
+    mesh(worldUvBox(W + 0.6, 0.35, D + 0.6, 2), roofMat, 0, roofTop + 0.17, zc, group);
+    mesh(worldUvBox(W + 0.6, 0.6, 0.25, 2), st.trim, 0, roofTop + 0.5, zb - 0.2, group);
   }
-  // Ceiling beams (visible inside)
-  for (let bx = -W / 2 + 1.5; bx < W / 2; bx += 2.5) {
-    mesh(new THREE.BoxGeometry(0.2, 0.25, D), mats.woodDark, bx, fy + H - 0.12, zc, group);
+  for (let i = 0; i < nf; i++) {
+    for (let bx = -W / 2 + 1.5; bx < W / 2; bx += 2.5) mesh(new THREE.BoxGeometry(0.2, 0.25, D), mats.woodDark, bx, fy + (i + 1) * H - 0.12, zc, group);
   }
-  solid(ctx, spec.x - W / 2 - 0.3, spec.x + W / 2 + 0.3, g + fy + H, g + fy + H + 0.5, 'wood');
-
-  // Floor collider — raised wooden floor
-  solid(ctx, spec.x - W / 2, spec.x + W / 2, g - 3, g + fy, 'wood');
+  solid(ctx, spec.x - W / 2 - 0.3, spec.x + W / 2 + 0.3, g + roofTop, g + roofTop + 0.5, 'wood', 'roof');
 
   // Optional loft (one-way platform reached by jumping from furniture)
   if (spec.loft) {
@@ -149,7 +237,6 @@ export function buildCabin(ctx: SiteContext, spec: CabinSpec): CabinResult {
     mesh(new THREE.BoxGeometry(0.12, 0.9, 0.12), mats.woodDark, L.x1 - 0.06, fy + L.height + 0.45, zf - 0.4, group);
     mesh(new THREE.BoxGeometry(0.1, 0.1, D - 0.6), mats.woodDark, L.x1 - 0.06, fy + L.height + 0.9, zc, group);
     for (const z of [zb + 0.6, zf - 0.6]) mesh(new THREE.BoxGeometry(0.2, L.height, 0.2), mats.woodDark, L.x1 - 0.1, fy + L.height / 2, z, group);
-    // Ladder
     const ladder = new THREE.Group();
     ladder.position.set(L.x1 + 0.35, fy, -1.6);
     ladder.rotation.z = -0.15;
@@ -159,12 +246,11 @@ export function buildCabin(ctx: SiteContext, spec: CabinSpec): CabinResult {
     oneway(ctx, spec.x + L.x0, spec.x + L.x1, g + fy + L.height, 'wood');
   }
 
-  // Cut-away fade region
   const fade: Fadeable = {
     x0: spec.x - W / 2 - 0.4,
     x1: spec.x + W / 2 + 0.4,
     y0: g - 0.5,
-    y1: g + fy + H + 1,
+    y1: g + fy + TH + 1,
     materials: [frontMat, postMat, roofMat],
     meshes: [],
     opacity: 1,
@@ -174,56 +260,61 @@ export function buildCabin(ctx: SiteContext, spec: CabinSpec): CabinResult {
     if (m.isMesh && fade.materials.includes(m.material as THREE.Material)) fade.meshes.push(m);
   });
   ctx.fadeables.push(fade);
+  ctx.interiors.push({ x0: spec.x - W / 2, x1: spec.x + W / 2, y0: g, y1: g + fy + TH });
 
-  return { group, floorY: g + fy, x: spec.x };
+  return { group, floorY: g + fy, x: spec.x, storeys };
 }
 
 /** Simple furniture helpers placed in cabin-local coordinates (floor at y = 0.4). */
 export const furniture = {
-  table(ctx: SiteContext, parent: THREE.Object3D, x: number, z: number, w = 1.8): number {
-    const top = FLOOR + 0.85;
+  table(ctx: SiteContext, parent: THREE.Object3D, x: number, z: number, w = 1.8, y = FLOOR): number {
+    const top = y + 0.85;
     mesh(worldUvBox(w, 0.08, 0.9), ctx.mats.woodDark, x, top - 0.04, z, parent);
-    for (const sx of [-1, 1]) for (const sz of [-1, 1]) mesh(new THREE.BoxGeometry(0.08, 0.81, 0.08), ctx.mats.woodDark, x + sx * (w / 2 - 0.1), FLOOR + 0.4, z + sz * 0.35, parent);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) mesh(new THREE.BoxGeometry(0.08, 0.81, 0.08), ctx.mats.woodDark, x + sx * (w / 2 - 0.1), y + 0.4, z + sz * 0.35, parent);
     return top;
   },
-  chair(ctx: SiteContext, parent: THREE.Object3D, x: number, z: number, rot = 0): void {
+  chair(ctx: SiteContext, parent: THREE.Object3D, x: number, z: number, rot = 0, y = FLOOR): void {
     const c = new THREE.Group();
-    c.position.set(x, FLOOR, z);
+    c.position.set(x, y, z);
     c.rotation.y = rot;
     parent.add(c);
     mesh(new THREE.BoxGeometry(0.5, 0.06, 0.5), ctx.mats.woodDark, 0, 0.48, 0, c);
     mesh(new THREE.BoxGeometry(0.5, 0.55, 0.06), ctx.mats.woodDark, 0, 0.78, -0.22, c);
     for (const sx of [-1, 1]) for (const sz of [-1, 1]) mesh(new THREE.BoxGeometry(0.05, 0.48, 0.05), ctx.mats.woodDark, sx * 0.2, 0.24, sz * 0.2, c);
   },
-  bed(ctx: SiteContext, parent: THREE.Object3D, x: number, z: number): void {
-    mesh(worldUvBox(2.1, 0.35, 1.0), ctx.mats.woodDark, x, FLOOR + 0.25, z, parent);
-    mesh(new THREE.BoxGeometry(1.95, 0.16, 0.9), ctx.mats.cloth, x, FLOOR + 0.5, z, parent);
-    mesh(new THREE.BoxGeometry(1.3, 0.1, 0.92), ctx.mats.fabric, x + 0.3, FLOOR + 0.6, z, parent);
-    mesh(new THREE.BoxGeometry(0.45, 0.12, 0.6), ctx.mats.bone, x - 0.72, FLOOR + 0.63, z, parent);
+  bed(ctx: SiteContext, parent: THREE.Object3D, x: number, z: number, y = FLOOR): void {
+    mesh(worldUvBox(2.1, 0.35, 1.0), ctx.mats.woodDark, x, y - 0.15, z, parent);
+    mesh(new THREE.BoxGeometry(1.95, 0.16, 0.9), ctx.mats.cloth, x, y + 0.1, z, parent);
+    mesh(new THREE.BoxGeometry(1.3, 0.1, 0.92), ctx.mats.fabric, x + 0.3, y + 0.2, z, parent);
+    mesh(new THREE.BoxGeometry(0.45, 0.12, 0.6), ctx.mats.bone, x - 0.72, y + 0.23, z, parent);
   },
-  stove(ctx: SiteContext, parent: THREE.Object3D, x: number, z: number, h: number): void {
-    mesh(new THREE.BoxGeometry(0.8, 0.8, 0.7), ctx.mats.metal, x, FLOOR + 0.4, z, parent);
-    mesh(new THREE.CylinderGeometry(0.09, 0.09, h + 1.5, 8), ctx.mats.metal, x, FLOOR + 0.8 + (h + 1.5) / 2, z - 0.15, parent);
+  stove(ctx: SiteContext, parent: THREE.Object3D, x: number, z: number, h: number, y = FLOOR): void {
+    mesh(new THREE.BoxGeometry(0.8, 0.8, 0.7), ctx.mats.metal, x, y + 0.4, z, parent);
+    mesh(new THREE.CylinderGeometry(0.09, 0.09, h + 1.5, 8), ctx.mats.metal, x, y + 0.8 + (h + 1.5) / 2, z - 0.15, parent);
   },
   shelf(ctx: SiteContext, parent: THREE.Object3D, x: number, y: number, z: number, w = 1.6): void {
     mesh(new THREE.BoxGeometry(w, 0.06, 0.35), ctx.mats.woodDark, x, y, z, parent);
     const cols = [0x6b4b2e, 0x3f5a6b, 0x7a6a3a, 0x5a3a3a];
     for (let i = 0; i < 5; i++) {
       const hh = 0.18 + ((i * 37) % 10) / 60;
-      mesh(new THREE.BoxGeometry(0.12, hh, 0.22), new THREE.MeshStandardMaterial({ color: cols[i % cols.length], roughness: 0.9 }), x - w / 2 + 0.2 + i * 0.16, y + 0.03 + hh / 2, z, parent);
+      mesh(new THREE.BoxGeometry(0.12, hh, 0.22), ctx.mats.books[i % cols.length], x - w / 2 + 0.2 + i * 0.16, y + 0.03 + hh / 2, z, parent);
     }
     mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.2, 8), ctx.mats.metal, x + w / 2 - 0.3, y + 0.13, z, parent);
   },
   crate(ctx: SiteContext, parent: THREE.Object3D, x: number, z: number, s = 0.8, y = FLOOR): void {
     mesh(worldUvBox(s, s, s, 0.8), ctx.mats.woodDark, x, y + s / 2, z, parent);
   },
-  rug(_ctx: SiteContext, parent: THREE.Object3D, x: number, z: number): void {
-    mesh(new THREE.BoxGeometry(2.6, 0.02, 1.6), new THREE.MeshStandardMaterial({ color: 0x6e3a2a, roughness: 1 }), x, FLOOR + 0.01, z, parent, false);
+  rug(ctx: SiteContext, parent: THREE.Object3D, x: number, z: number, y = FLOOR): void {
+    mesh(new THREE.BoxGeometry(2.6, 0.02, 1.6), ctx.mats.rug, x, y + 0.01, z, parent, false);
   },
   paper(ctx: SiteContext, parent: THREE.Object3D, x: number, y: number, z: number, rot = 0.2): THREE.Mesh {
     const m = mesh(new THREE.BoxGeometry(0.32, 0.01, 0.42), ctx.mats.paper, x, y + 0.006, z, parent, false);
     m.rotation.y = rot;
     return m;
+  },
+  counter(ctx: SiteContext, parent: THREE.Object3D, x: number, z: number, w: number, y = FLOOR): void {
+    mesh(worldUvBox(w, 1.0, 0.7), ctx.mats.woodDark, x, y + 0.5, z, parent);
+    mesh(worldUvBox(w + 0.1, 0.06, 0.8), ctx.mats.concrete, x, y + 1.03, z, parent);
   },
 };
 

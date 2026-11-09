@@ -29,10 +29,12 @@ export class NoteReader {
     return this.el.classList.contains('is-visible');
   }
 
-  open(title: string, body: string, kind: 'note' | 'sign'): void {
+  open(title: string, body: string, kind: 'note' | 'sign' | 'photo' | 'radio'): void {
     this.title.textContent = title;
     this.body.replaceChildren(...body.split(/\n\s*\n/).map((p) => h('p', {}, p.trim())));
     this.paper.classList.toggle('is-sign', kind === 'sign');
+    this.paper.classList.toggle('is-photo', kind === 'photo');
+    this.paper.classList.toggle('is-radio', kind === 'radio');
     this.paper.scrollTop = 0;
     show(this.el, true);
   }

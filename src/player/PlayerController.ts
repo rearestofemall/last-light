@@ -98,7 +98,7 @@ export class PlayerController {
     this.age += dt;
 
     // --- Water state ---
-    const water = this.world.terrain.waterAt(b.x);
+    const water = this.world.isUnderground(b.x, b.y) ? null : this.world.terrain.waterAt(b.x);
     const wasSub = this.submersion;
     this.waterSurfaceY = water ? water.surfaceY : null;
     this.submersion = water ? Math.max(0, water.surfaceY - b.y) : 0;

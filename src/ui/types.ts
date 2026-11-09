@@ -5,6 +5,7 @@ export interface SaveSummary {
   location: string;
   region: string;
   playTime: number;
+  day: number;
 }
 
 /** What the UI is allowed to ask the game to do. The UI never owns game state. */

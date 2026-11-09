@@ -140,7 +140,7 @@ export function deadTree(rng: Rng): THREE.BufferGeometry {
   return finish(parts);
 }
 
-export function bush(rng: Rng): THREE.BufferGeometry {
+export function bush(rng: Rng, berries = rng.chance(0.5)): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = [];
   const greens = [0x3f5f27, 0x4a6a2a, 0x557530];
   const n = rng.int(3, 5);
@@ -149,10 +149,10 @@ export function bush(rng: Rng): THREE.BufferGeometry {
     const ico = new THREE.IcosahedronGeometry(r, 0);
     parts.push(part(T(ico, rng.range(-0.6, 0.6), r * 0.7, rng.range(-0.4, 0.4)), { color: rng.pick(greens), jitter: 0.18, vary: 0.25, shadeBottom: 0.45 }));
   }
-  if (rng.chance(0.5)) {
-    for (let i = 0; i < 5; i++) {
+  if (berries) {
+    for (let i = 0; i < 9; i++) {
       const b = new THREE.IcosahedronGeometry(0.07, 0);
-      parts.push(part(T(b, rng.range(-0.7, 0.7), rng.range(0.6, 1.1), rng.range(0.2, 0.6)), { color: 0x9b2335 }));
+      parts.push(part(T(b, rng.range(-0.7, 0.7), rng.range(0.5, 1.1), rng.range(0.25, 0.65)), { color: 0xa3263a }));
     }
   }
   return finish(parts);
@@ -240,7 +240,111 @@ export function stump(rng: Rng): THREE.BufferGeometry {
   return finish([part(g, { color: 0x4e3b2b, jitter: 0.05 }), part(top, { color: 0xb09068 })]);
 }
 
-export type VegKind = 'pine' | 'broadleaf' | 'birch' | 'dead' | 'bush' | 'fern' | 'grass' | 'flowers' | 'rock' | 'log' | 'stump';
+export function snowPine(rng: Rng): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [];
+  const trunkH = rng.range(1.8, 2.6);
+  parts.push(part(T(new THREE.CylinderGeometry(0.13, 0.24, trunkH + 2, 6), 0, (trunkH + 2) / 2, 0), { color: 0x45342a, jitter: 0.05 }));
+  const tiers = rng.int(4, 6);
+  let y = trunkH;
+  let r = rng.range(1.7, 2.2);
+  for (let i = 0; i < tiers; i++) {
+    const h = rng.range(1.9, 2.4);
+    const cone = new THREE.ConeGeometry(r, h, rng.int(7, 9), 1, false);
+    cone.rotateY(rng.range(0, Math.PI));
+    parts.push(part(T(cone, 0, y + h / 2, 0), { color: 0x24392c, jitter: 0.3, vary: 0.2, shadeBottom: 0.35 }));
+    // Snow cap sitting on each tier
+    const cap = new THREE.ConeGeometry(r * 0.8, h * 0.45, 8, 1, false);
+    parts.push(part(T(cap, 0, y + h * 0.78, 0), { color: 0xeef2f6, jitter: 0.22, vary: 0.08 }));
+    y += h * 0.52;
+    r *= 0.75;
+  }
+  return finish(parts);
+}
+
+export function herb(rng: Rng): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [];
+  for (let i = 0; i < 7; i++) {
+    const h = rng.range(0.35, 0.6);
+    parts.push(part(T(new THREE.CylinderGeometry(0.015, 0.02, h, 3), rng.range(-0.15, 0.15), h / 2, rng.range(-0.15, 0.15)), { color: 0x4d7a35 }));
+    const p = parts[parts.length - 1];
+    p.computeBoundingBox();
+    const bb = p.boundingBox!;
+    const head = new THREE.IcosahedronGeometry(0.08, 0);
+    head.scale(1.3, 0.5, 1.3);
+    parts.push(part(T(head, (bb.min.x + bb.max.x) / 2, h, (bb.min.z + bb.max.z) / 2), { color: rng.pick([0xf2eedf, 0xe8e0c8, 0xd9c8f0]) }));
+  }
+  for (let i = 0; i < 6; i++) {
+    const leaf = new THREE.ConeGeometry(0.06, 0.3, 3);
+    leaf.scale(1, 1, 0.3);
+    leaf.translate(0, 0.15, 0);
+    leaf.rotateX(1.1);
+    leaf.rotateY((i / 6) * Math.PI * 2);
+    parts.push(part(leaf, { color: 0x5b8a3a, shadeBottom: 0.4 }));
+  }
+  return finish(parts);
+}
+
+export function sticks(rng: Rng): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [];
+  for (let i = 0; i < 6; i++) {
+    const len = rng.range(0.8, 1.5);
+    const g = new THREE.CylinderGeometry(0.03, 0.05, len, 5);
+    g.rotateZ(Math.PI / 2 + rng.range(-0.25, 0.25));
+    g.rotateY(rng.range(-0.6, 0.6));
+    parts.push(part(T(g, rng.range(-0.2, 0.2), 0.05 + i * 0.045, rng.range(-0.2, 0.2)), { color: rng.pick([0x5c4632, 0x6a5139, 0x4e3b2a]) }));
+  }
+  return finish(parts);
+}
+
+export function scrap(rng: Rng): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [];
+  const cols = [0x6e6a64, 0x7b4b33, 0x5d6166, 0x8a5a3c, 0x4e5a63];
+  for (let i = 0; i < 7; i++) {
+    const g = rng.chance(0.4) ? new THREE.CylinderGeometry(0.12, 0.12, rng.range(0.3, 0.9), 7) : new THREE.BoxGeometry(rng.range(0.3, 0.9), rng.range(0.05, 0.3), rng.range(0.3, 0.7));
+    g.rotateZ(rng.range(-0.8, 0.8));
+    g.rotateY(rng.range(0, Math.PI));
+    parts.push(part(T(g, rng.range(-0.5, 0.5), rng.range(0.1, 0.45), rng.range(-0.3, 0.3)), { color: rng.pick(cols), jitter: 0.04 }));
+  }
+  return finish(parts);
+}
+
+export function reeds(rng: Rng): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [];
+  for (let i = 0; i < 11; i++) {
+    const h = rng.range(0.8, 1.4);
+    const blade = new THREE.ConeGeometry(0.035, h, 3);
+    blade.translate(0, h / 2, 0);
+    blade.rotateZ(rng.range(-0.25, 0.25));
+    parts.push(part(T(blade, rng.range(-0.3, 0.3), 0, rng.range(-0.3, 0.3)), { color: rng.pick([0x8a8f4a, 0x9d9a58, 0x76803e]), shadeBottom: 0.5 }));
+  }
+  return finish(parts);
+}
+
+export function snowDrift(rng: Rng): THREE.BufferGeometry {
+  const g = new THREE.IcosahedronGeometry(rng.range(0.7, 1.3), 1);
+  g.scale(rng.range(1.4, 2.2), 0.35, rng.range(1, 1.5));
+  return finish([part(g, { color: 0xeef2f6, jitter: 0.2, vary: 0.05 })]);
+}
+
+export type VegKind =
+  | 'pine'
+  | 'broadleaf'
+  | 'birch'
+  | 'dead'
+  | 'bush'
+  | 'fern'
+  | 'grass'
+  | 'flowers'
+  | 'rock'
+  | 'log'
+  | 'stump'
+  | 'snowpine'
+  | 'berrybush'
+  | 'herb'
+  | 'sticks'
+  | 'scrap'
+  | 'reeds'
+  | 'drift';
 
 /** Shared geometry variants for every vegetation kind, built once. */
 export class VegetationLibrary {
@@ -254,7 +358,14 @@ export class VegetationLibrary {
       broadleaf: many(3, broadleaf),
       birch: many(2, birch),
       dead: many(2, deadTree),
-      bush: many(3, bush),
+      bush: many(3, (r) => bush(r, false)),
+      berrybush: many(2, (r) => bush(r, true)),
+      snowpine: many(3, snowPine),
+      herb: many(2, herb),
+      sticks: many(2, sticks),
+      scrap: many(3, scrap),
+      reeds: many(2, reeds),
+      drift: many(2, snowDrift),
       fern: many(2, fern),
       grass: many(3, (r) => grassTuft(r, false)),
       flowers: many(3, (r) => grassTuft(r, true)),

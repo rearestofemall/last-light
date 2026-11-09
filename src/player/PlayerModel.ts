@@ -39,16 +39,23 @@ export class PlayerModel {
   private swimW = 0;
   private time = 0;
   private landSquash = 0;
+  private actionT = 0;
+  private actionDur = 0;
+  private actionKind: 'swing' | 'work' | 'eat' | null = null;
+  /** Raises the right arm when carrying a light. */
+  holdingLight = false;
 
-  constructor() {
-    const jacket = mat(0x4b5434);
-    const jacketDark = mat(0x3a4129);
+  private sitting = false;
+
+  constructor(opts: { jacket?: number; scarf?: number; hair?: number } = {}) {
+    const jacket = mat(opts.jacket ?? 0x4b5434);
+    const jacketDark = mat(new THREE.Color(opts.jacket ?? 0x4b5434).multiplyScalar(0.78).getHex());
     const pants = mat(0x353a44);
     const skin = mat(0xc99f7e, 0.7);
     const boots = mat(0x2b231d, 0.95);
     const pack = mat(0x6e4b2c);
-    const scarf = mat(0x9a3d2a);
-    const hair = mat(0x2a2019);
+    const scarf = mat(opts.scarf ?? 0x9a3d2a);
+    const hair = mat(opts.hair ?? 0x2a2019);
 
     this.root.add(this.hips);
     this.hips.position.y = 0.94;
@@ -199,6 +206,66 @@ export class PlayerModel {
     this.armR.lower.rotation.x = damp(this.armR.lower.rotation.x, blend('armRL'), r, dt);
     this.armL.upper.rotation.z = damp(this.armL.upper.rotation.z, 0.08 + this.airW * 0.3, r, dt);
     this.armR.upper.rotation.z = damp(this.armR.upper.rotation.z, -0.08 - this.airW * 0.3, r, dt);
+
+    // Action overlays on the right arm.
+    if (this.actionT > 0) {
+      this.actionT = Math.max(0, this.actionT - dt);
+      const t = 1 - this.actionT / this.actionDur;
+      if (this.actionKind === 'eat') {
+        this.armR.upper.rotation.x = -1.3 - Math.sin(t * Math.PI) * 0.3;
+        this.armR.lower.rotation.x = -1.7;
+        this.head.rotation.x = 0.15;
+      } else {
+        // Wind up, then strike down and forward.
+        const k = t < 0.35 ? t / 0.35 : 1 - (t - 0.35) / 0.65;
+        const raise = this.actionKind === 'swing' ? 2.7 : 2.2;
+        this.armR.upper.rotation.x = t < 0.35 ? -raise * k : -raise + (raise + 0.5) * (1 - k);
+        this.armR.lower.rotation.x = -0.3;
+        this.torso.rotation.x += t > 0.35 ? 0.15 * k : -0.1 * k;
+      }
+    } else if (this.holdingLight && this.swimW < 0.5) {
+      this.armR.upper.rotation.x = damp(this.armR.upper.rotation.x, -0.95, 10, dt);
+      this.armR.lower.rotation.x = damp(this.armR.lower.rotation.x, -0.6, 10, dt);
+    }
+  }
+
+  /** Static seated pose (NPCs). Call update() each frame for breathing. */
+  sit(): void {
+    this.sitting = true;
+    this.hips.position.y = 0.42;
+    this.legL.upper.rotation.x = -1.45;
+    this.legR.upper.rotation.x = -1.35;
+    this.legL.lower.rotation.x = 1.5;
+    this.legR.lower.rotation.x = 1.4;
+    this.armL.upper.rotation.x = -0.7;
+    this.armR.upper.rotation.x = -0.8;
+    this.armL.lower.rotation.x = -0.9;
+    this.armR.lower.rotation.x = -0.9;
+    this.torso.rotation.x = 0.25;
+    this.head.rotation.x = 0.2;
+  }
+
+  /** Idle animation for a seated NPC. */
+  idle(dt: number): void {
+    if (!this.sitting) return;
+    this.time += dt;
+    this.torso.rotation.x = 0.25 + Math.sin(this.time * 1.6) * 0.02;
+    this.head.rotation.y = Math.sin(this.time * 0.3) * 0.25;
+  }
+
+  swing(): void {
+    this.actionKind = 'swing';
+    this.actionT = this.actionDur = 0.4;
+  }
+
+  work(): void {
+    this.actionKind = 'work';
+    this.actionT = this.actionDur = 0.42;
+  }
+
+  eat(): void {
+    this.actionKind = 'eat';
+    this.actionT = this.actionDur = 0.7;
   }
 
   /** Called on landing to add a short squash. */

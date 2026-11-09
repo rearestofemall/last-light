@@ -15,6 +15,8 @@ uniform vec3 uGround;
 uniform vec3 uSunColor;
 uniform vec3 uCloudColor;
 uniform vec2 uSunPos;
+uniform vec2 uMoonPos;
+uniform float uStars;
 uniform float uTime;
 uniform float uScroll;
 uniform float uAspect;
@@ -57,6 +59,20 @@ void main() {
   vec3 cloud = mix(uCloudColor * 0.78, uCloudColor, shade) + uSunColor * 0.25 * exp(-d * 2.0);
   col = mix(col, cloud, cl * 0.9);
 
+  // Stars and moon (night)
+  if (uStars > 0.01) {
+    vec2 sg = floor(vec2(vUv.x * uAspect, vUv.y) * 160.0);
+    float h = hash(sg);
+    float tw = 0.6 + 0.4 * sin(uTime * 2.0 + h * 40.0);
+    float star = step(0.9965, h) * tw * smoothstep(uHorizonY, uHorizonY + 0.25, y) * (1.0 - cl);
+    col += vec3(0.85, 0.9, 1.0) * star * uStars * 1.4;
+    vec2 mp = vec2((uMoonPos.x - 0.5) * uAspect, uMoonPos.y);
+    float md = length(p - mp);
+    col += vec3(0.55, 0.62, 0.8) * 0.18 * exp(-md * 6.0) * uStars;
+    float disc = smoothstep(0.03, 0.025, md);
+    float crater = vnoise((p - mp) * 90.0) * 0.25;
+    col = mix(col, vec3(0.86, 0.88, 0.92) - crater, disc * uStars);
+  }
   gl_FragColor = vec4(col, 1.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
@@ -80,6 +96,8 @@ export class Sky {
         uSunColor: { value: new THREE.Color() },
         uCloudColor: { value: new THREE.Color() },
         uSunPos: { value: new THREE.Vector2() },
+        uMoonPos: { value: new THREE.Vector2() },
+        uStars: { value: 0 },
         uTime: { value: 0 },
         uScroll: { value: 0 },
         uAspect: { value: 1 },
@@ -97,9 +115,12 @@ export class Sky {
     u.uZenith.value.copy(a.zenith);
     u.uHorizon.value.copy(a.horizon);
     u.uGround.value.copy(a.fog);
-    u.uSunColor.value.copy(a.sunColor).multiplyScalar(Math.min(1, a.sunIntensity / 2.7));
+    // The sun's glow fades with it; at night the directional light is the moon, which has its own disc.
+    u.uSunColor.value.copy(a.sunColor).multiplyScalar(Math.min(1, a.sunIntensity / 2.7) * (1 - a.stars));
     u.uCloudColor.value.copy(a.cloudColor);
     u.uSunPos.value.copy(a.sunScreen);
+    u.uMoonPos.value.copy(a.moonScreen);
+    u.uStars.value = a.stars;
     u.uCloudCover.value = a.cloudCover;
   }
 

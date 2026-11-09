@@ -60,6 +60,7 @@ export class SettingsPanel {
           ], (v) => this.settings.set({ quality: v as QualityLevel })),
           this.toggle('Shadows', 'Dynamic sun shadows', 'shadows', s),
           this.slider('Render scale', 'Lower for better performance', s.renderScale, 0.5, 1, 0.05, (v) => `${Math.round(v * 100)}%`, (v) => this.settings.set({ renderScale: v })),
+          this.toggle('Adaptive resolution', 'Lowers resolution on slow hardware to keep the game smooth', 'adaptiveResolution', s),
         ],
       },
       {

@@ -1,26 +1,37 @@
+import type { SfxName } from '../core/events';
 import type { GameSettings } from '../core/Settings';
 import type { Surface } from '../world/Terrain';
 
+export interface AmbienceState {
+  wind: number;
+  water: number;
+  rain: number;
+  sea: number;
+  fire: number;
+  birds: number;
+  crickets: number;
+  cave: number;
+  time: number;
+  active: boolean;
+}
+
 /**
  * Fully synthesised audio: every sound is built from noise and oscillators at runtime.
- * Buses: master → { music, sfx, ambience, ui }.
+ * Buses: master → { music, sfx, ambience, ui }, with a shared convolution reverb.
  */
 export class AudioEngine {
   ctx: AudioContext | null = null;
   private master!: GainNode;
-  private buses!: { music: GainNode; sfx: GainNode; ambience: GainNode; ui: GainNode };
+  buses!: { music: GainNode; sfx: GainNode; ambience: GainNode; ui: GainNode };
+  reverb!: ConvolverNode;
+  private reverbSend!: GainNode;
   private white!: AudioBuffer;
   private brown!: AudioBuffer;
-  private windGain!: GainNode;
-  private windFilter!: BiquadFilterNode;
-  private leavesGain!: GainNode;
-  private waterGain!: GainNode;
+  private amb: Record<string, { gain: GainNode; filter?: BiquadFilterNode }> = {};
   private settings: GameSettings | null = null;
-  private birdTimer = 2;
-  private windLevel = 0.5;
-  private ambienceOn = false;
+  private timers = { bird: 2, cricket: 1, crackle: 0.2, drip: 1, wave: 0 };
+  onReady: (() => void) | null = null;
 
-  /** Must be called from a user gesture (browser autoplay policy). */
   unlock(): void {
     if (this.ctx) {
       if (this.ctx.state === 'suspended') void this.ctx.resume();
@@ -43,8 +54,14 @@ export class AudioEngine {
     this.buses = { music: bus(), sfx: bus(), ambience: bus(), ui: bus() };
     this.white = this.makeNoise(2, 'white');
     this.brown = this.makeNoise(4, 'brown');
+    this.reverb = ctx.createConvolver();
+    this.reverb.buffer = this.makeImpulse(3.2);
+    this.reverbSend = ctx.createGain();
+    this.reverbSend.gain.value = 0.5;
+    this.reverbSend.connect(this.reverb).connect(this.master);
     if (this.settings) this.applySettings(this.settings);
     this.buildAmbience();
+    this.onReady?.();
   }
 
   private makeNoise(seconds: number, kind: 'white' | 'brown'): AudioBuffer {
@@ -63,12 +80,30 @@ export class AudioEngine {
     return buf;
   }
 
+  private makeImpulse(seconds: number): AudioBuffer {
+    const ctx = this.ctx!;
+    const len = Math.floor(ctx.sampleRate * seconds);
+    const buf = ctx.createBuffer(2, len, ctx.sampleRate);
+    for (let c = 0; c < 2; c++) {
+      const d = buf.getChannelData(c);
+      for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.6);
+    }
+    return buf;
+  }
+
+  /** Send a node to the reverb as well as its dry destination. */
+  wet(node: AudioNode, amount: number): void {
+    const g = this.ctx!.createGain();
+    g.gain.value = amount;
+    node.connect(g).connect(this.reverbSend);
+  }
+
   applySettings(s: GameSettings): void {
     this.settings = s;
     if (!this.ctx) return;
     const t = this.ctx.currentTime;
     this.master.gain.setTargetAtTime(s.muted ? 0 : s.masterVolume, t, 0.05);
-    this.buses.music.gain.setTargetAtTime(s.musicVolume, t, 0.05);
+    this.buses.music.gain.setTargetAtTime(s.musicVolume * 0.7, t, 0.05);
     this.buses.sfx.gain.setTargetAtTime(s.sfxVolume, t, 0.05);
     this.buses.ambience.gain.setTargetAtTime(s.ambienceVolume, t, 0.05);
     this.buses.ui.gain.setTargetAtTime(s.sfxVolume, t, 0.05);
@@ -78,106 +113,150 @@ export class AudioEngine {
     const src = this.ctx!.createBufferSource();
     src.buffer = buffer;
     src.loop = true;
-    src.loopStart = Math.random();
     src.start(0, Math.random() * buffer.duration);
     return src;
   }
 
-  private buildAmbience(): void {
+  private layer(name: string, buffer: AudioBuffer, type: BiquadFilterType, freq: number, q = 0.7): void {
     const ctx = this.ctx!;
-    // Wind: brown noise through a slowly wandering band-pass.
-    this.windFilter = ctx.createBiquadFilter();
-    this.windFilter.type = 'bandpass';
-    this.windFilter.frequency.value = 400;
-    this.windFilter.Q.value = 0.7;
-    this.windGain = ctx.createGain();
-    this.windGain.gain.value = 0;
-    this.loop(this.brown).connect(this.windFilter).connect(this.windGain).connect(this.buses.ambience);
-    // Leaves: high, airy rustle that swells with the wind.
-    const hp = ctx.createBiquadFilter();
-    hp.type = 'highpass';
-    hp.frequency.value = 4500;
-    this.leavesGain = ctx.createGain();
-    this.leavesGain.gain.value = 0;
-    this.loop(this.white).connect(hp).connect(this.leavesGain).connect(this.buses.ambience);
-    // River: low rumble plus burble.
-    const lp = ctx.createBiquadFilter();
-    lp.type = 'lowpass';
-    lp.frequency.value = 900;
-    const bp = ctx.createBiquadFilter();
-    bp.type = 'bandpass';
-    bp.frequency.value = 1600;
-    bp.Q.value = 1.5;
-    this.waterGain = ctx.createGain();
-    this.waterGain.gain.value = 0;
-    const src = this.loop(this.white);
-    src.connect(lp).connect(this.waterGain);
-    src.connect(bp).connect(this.waterGain);
-    this.waterGain.connect(this.buses.ambience);
+    const f = ctx.createBiquadFilter();
+    f.type = type;
+    f.frequency.value = freq;
+    f.Q.value = q;
+    const g = ctx.createGain();
+    g.gain.value = 0;
+    this.loop(buffer).connect(f).connect(g).connect(this.buses.ambience);
+    this.amb[name] = { gain: g, filter: f };
   }
 
-  setAmbienceActive(on: boolean): void {
-    this.ambienceOn = on;
+  private buildAmbience(): void {
+    this.layer('wind', this.brown, 'bandpass', 400);
+    this.layer('leaves', this.white, 'highpass', 4500);
+    this.layer('water', this.white, 'lowpass', 900);
+    this.layer('rain', this.white, 'bandpass', 2600, 0.4);
+    this.layer('rainLow', this.brown, 'lowpass', 500);
+    this.layer('sea', this.brown, 'lowpass', 700);
+    this.layer('fire', this.brown, 'bandpass', 900, 0.6);
+    this.layer('cave', this.brown, 'lowpass', 160);
   }
 
-  /** Called every frame with environmental intensities in [0, 1]. */
-  update(dt: number, env: { wind: number; water: number; birds: number; time: number }): void {
-    if (!this.ctx || !this.windGain) return;
+  update(dt: number, s: AmbienceState): void {
+    if (!this.ctx || !this.amb.wind) return;
     const t = this.ctx.currentTime;
-    const on = this.ambienceOn ? 1 : 0.35;
-    this.windLevel = env.wind;
-    const gust = 0.6 + 0.4 * Math.sin(env.time * 0.23) * Math.sin(env.time * 0.071 + 1);
-    this.windGain.gain.setTargetAtTime(0.16 * env.wind * gust * on, t, 0.3);
-    this.windFilter.frequency.setTargetAtTime(280 + 380 * gust * env.wind, t, 0.5);
-    this.leavesGain.gain.setTargetAtTime(0.018 * env.wind * gust * on, t, 0.3);
-    this.waterGain.gain.setTargetAtTime(0.22 * env.water * on, t, 0.25);
-    this.birdTimer -= dt;
-    if (this.birdTimer <= 0) {
-      this.birdTimer = 1.5 + Math.random() * 5;
-      if (Math.random() < env.birds) this.bird();
+    const on = s.active ? 1 : 0.35;
+    const gust = 0.6 + 0.4 * Math.sin(s.time * 0.23) * Math.sin(s.time * 0.071 + 1);
+    const set = (k: string, v: number, tc = 0.3) => this.amb[k].gain.gain.setTargetAtTime(v * on, t, tc);
+    set('wind', 0.06 + 0.2 * s.wind * gust);
+    this.amb.wind.filter!.frequency.setTargetAtTime(260 + 500 * gust * s.wind, t, 0.5);
+    set('leaves', 0.02 * s.wind * gust * (1 - s.cave));
+    set('water', 0.22 * s.water);
+    set('rain', 0.09 * s.rain);
+    set('rainLow', 0.12 * s.rain);
+    const swell = 0.5 + 0.5 * Math.sin(s.time * 0.5);
+    set('sea', 0.25 * s.sea * (0.55 + 0.45 * swell), 0.6);
+    set('fire', 0.07 * s.fire);
+    set('cave', 0.18 * s.cave);
+
+    // Event-based ambience
+    const tm = this.timers;
+    tm.bird -= dt;
+    if (tm.bird <= 0) {
+      tm.bird = 1.5 + Math.random() * 5;
+      if (Math.random() < s.birds) this.bird();
+    }
+    tm.cricket -= dt;
+    if (tm.cricket <= 0) {
+      tm.cricket = 0.25 + Math.random() * 0.6;
+      if (Math.random() < s.crickets) this.cricket();
+    }
+    tm.crackle -= dt;
+    if (tm.crackle <= 0) {
+      tm.crackle = 0.05 + Math.random() * 0.25;
+      if (Math.random() < s.fire) this.crackle(s.fire);
+    }
+    tm.drip -= dt;
+    if (tm.drip <= 0) {
+      tm.drip = 0.6 + Math.random() * 2.5;
+      if (Math.random() < s.cave) this.drip();
     }
   }
 
-  private env(g: GainNode, t: number, peak: number, attack: number, decay: number): void {
+  // ------------------------------------------------------------------ synthesis primitives
+  private envelope(g: GainNode, t: number, peak: number, attack: number, decay: number): void {
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(peak, t + attack);
+    g.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak), t + attack);
     g.gain.exponentialRampToValueAtTime(0.0001, t + attack + decay);
   }
 
-  private noiseBurst(dest: AudioNode, t: number, filter: { type: BiquadFilterType; freq: number; q?: number; sweepTo?: number }, peak: number, attack: number, decay: number, pan = 0): void {
+  noise(dest: AudioNode, t: number, f: { type: BiquadFilterType; freq: number; q?: number; sweepTo?: number }, peak: number, attack: number, decay: number, pan = 0, brown = false): void {
     const ctx = this.ctx!;
     const src = ctx.createBufferSource();
-    src.buffer = this.white;
+    src.buffer = brown ? this.brown : this.white;
     src.playbackRate.value = 0.9 + Math.random() * 0.2;
-    const f = ctx.createBiquadFilter();
-    f.type = filter.type;
-    f.frequency.setValueAtTime(filter.freq, t);
-    if (filter.sweepTo) f.frequency.exponentialRampToValueAtTime(filter.sweepTo, t + attack + decay);
-    f.Q.value = filter.q ?? 1;
+    const filt = ctx.createBiquadFilter();
+    filt.type = f.type;
+    filt.frequency.setValueAtTime(f.freq, t);
+    if (f.sweepTo) filt.frequency.exponentialRampToValueAtTime(f.sweepTo, t + attack + decay);
+    filt.Q.value = f.q ?? 1;
     const g = ctx.createGain();
-    this.env(g, t, peak, attack, decay);
+    this.envelope(g, t, peak, attack, decay);
     const p = ctx.createStereoPanner();
     p.pan.value = pan;
-    src.connect(f).connect(g).connect(p).connect(dest);
+    src.connect(filt).connect(g).connect(p).connect(dest);
     src.start(t, Math.random() * 1.5);
     src.stop(t + attack + decay + 0.05);
   }
 
-  private tone(dest: AudioNode, t: number, type: OscillatorType, f0: number, f1: number, peak: number, attack: number, decay: number, pan = 0): void {
+  tone(dest: AudioNode, t: number, type: OscillatorType, f0: number, f1: number, peak: number, attack: number, decay: number, pan = 0, reverb = 0): void {
     const ctx = this.ctx!;
     const o = ctx.createOscillator();
     o.type = type;
     o.frequency.setValueAtTime(f0, t);
-    o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + attack + decay);
+    if (f1 !== f0) o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + attack + decay);
     const g = ctx.createGain();
-    this.env(g, t, peak, attack, decay);
+    this.envelope(g, t, peak, attack, decay);
     const p = ctx.createStereoPanner();
     p.pan.value = pan;
     o.connect(g).connect(p).connect(dest);
+    if (reverb > 0) this.wet(p, reverb);
     o.start(t);
     o.stop(t + attack + decay + 0.05);
   }
 
+  // ------------------------------------------------------------------ ambience events
+  private bird(): void {
+    const ctx = this.ctx!;
+    const t0 = ctx.currentTime;
+    const base = 2300 + Math.random() * 2200;
+    const notes = 2 + Math.floor(Math.random() * 5);
+    const pan = Math.random() * 1.6 - 0.8;
+    const far = 0.3 + Math.random() * 0.7;
+    const style = Math.random();
+    for (let i = 0; i < notes; i++) {
+      const t = t0 + i * (0.09 + Math.random() * 0.08);
+      const f = base * (1 + (style < 0.5 ? i * 0.06 : -i * 0.05));
+      this.tone(this.buses.ambience, t, 'sine', f, f * (style < 0.5 ? 1.35 : 0.75), 0.03 * far, 0.01, 0.06, pan, 0.2);
+    }
+  }
+
+  private cricket(): void {
+    const t = this.ctx!.currentTime;
+    const pan = Math.random() * 1.4 - 0.7;
+    for (let i = 0; i < 3; i++) this.tone(this.buses.ambience, t + i * 0.045, 'sine', 4300 + Math.random() * 200, 4300, 0.008, 0.005, 0.03, pan);
+  }
+
+  private crackle(k: number): void {
+    const t = this.ctx!.currentTime;
+    this.noise(this.buses.ambience, t, { type: 'highpass', freq: 2500 + Math.random() * 3000 }, 0.05 * k * Math.random(), 0.001, 0.02 + Math.random() * 0.03, Math.random() * 0.4 - 0.2);
+  }
+
+  private drip(): void {
+    const t = this.ctx!.currentTime;
+    const f = 1400 + Math.random() * 900;
+    this.tone(this.buses.ambience, t, 'sine', f, f * 0.55, 0.04, 0.002, 0.18, Math.random() * 1.2 - 0.6, 0.5);
+  }
+
+  // ------------------------------------------------------------------ gameplay sfx
   footstep(surface: Surface, intensity: number): void {
     if (!this.ctx) return;
     const t = this.ctx.currentTime;
@@ -187,33 +266,34 @@ export class AudioEngine {
     switch (surface) {
       case 'wood':
         this.tone(d, t, 'sine', 170 + Math.random() * 30, 90, 0.22 * k, 0.003, 0.09, pan);
-        this.noiseBurst(d, t, { type: 'bandpass', freq: 1100, q: 1.2 }, 0.12 * k, 0.002, 0.05, pan);
+        this.noise(d, t, { type: 'bandpass', freq: 1100, q: 1.2 }, 0.12 * k, 0.002, 0.05, pan);
         break;
       case 'rock':
       case 'metal':
-        this.noiseBurst(d, t, { type: 'bandpass', freq: 2600, q: 2 }, 0.14 * k, 0.001, 0.04, pan);
+        this.noise(d, t, { type: 'bandpass', freq: 2600, q: 2 }, 0.14 * k, 0.001, 0.04, pan);
         this.tone(d, t, 'triangle', 320, 180, 0.05 * k, 0.002, 0.04, pan);
         break;
+      case 'ice':
+        this.noise(d, t, { type: 'bandpass', freq: 3800, q: 3 }, 0.1 * k, 0.001, 0.05, pan);
+        this.tone(d, t, 'sine', 900, 600, 0.03 * k, 0.002, 0.06, pan);
+        break;
       case 'water':
-        this.noiseBurst(d, t, { type: 'bandpass', freq: 700, q: 1.2, sweepTo: 1800 }, 0.2 * k, 0.01, 0.18, pan);
+        this.noise(d, t, { type: 'bandpass', freq: 700, q: 1.2, sweepTo: 1800 }, 0.2 * k, 0.01, 0.18, pan);
+        break;
+      case 'snow':
+        this.noise(d, t, { type: 'bandpass', freq: 1800, q: 0.6, sweepTo: 900 }, 0.12 * k, 0.02, 0.12, pan);
         break;
       case 'sand':
-      case 'snow':
-        this.noiseBurst(d, t, { type: 'highpass', freq: 2400 }, 0.07 * k, 0.01, 0.09, pan);
+        this.noise(d, t, { type: 'highpass', freq: 2400 }, 0.07 * k, 0.01, 0.09, pan);
         break;
       case 'dirt':
-        this.noiseBurst(d, t, { type: 'bandpass', freq: 900, q: 0.9 }, 0.16 * k, 0.004, 0.07, pan);
+        this.noise(d, t, { type: 'bandpass', freq: 900, q: 0.9 }, 0.16 * k, 0.004, 0.07, pan);
         this.tone(d, t, 'sine', 95, 60, 0.08 * k, 0.003, 0.05, pan);
         break;
       default:
-        this.noiseBurst(d, t, { type: 'bandpass', freq: 1900, q: 0.8 }, 0.12 * k, 0.006, 0.08, pan);
-        this.noiseBurst(d, t + 0.02, { type: 'highpass', freq: 5000 }, 0.03 * k, 0.005, 0.06, pan);
+        this.noise(d, t, { type: 'bandpass', freq: 1900, q: 0.8 }, 0.12 * k, 0.006, 0.08, pan);
+        this.noise(d, t + 0.02, { type: 'highpass', freq: 5000 }, 0.03 * k, 0.005, 0.06, pan);
     }
-  }
-
-  jump(): void {
-    if (!this.ctx) return;
-    this.noiseBurst(this.buses.sfx, this.ctx.currentTime, { type: 'bandpass', freq: 1200, q: 0.8 }, 0.06, 0.005, 0.08);
   }
 
   land(impact: number, surface: Surface): void {
@@ -226,26 +306,154 @@ export class AudioEngine {
   splash(intensity: number): void {
     if (!this.ctx) return;
     const t = this.ctx.currentTime;
-    this.noiseBurst(this.buses.sfx, t, { type: 'lowpass', freq: 3000, sweepTo: 500 }, 0.35 * intensity, 0.005, 0.5);
-    this.noiseBurst(this.buses.sfx, t + 0.05, { type: 'bandpass', freq: 1800, q: 2, sweepTo: 3000 }, 0.1 * intensity, 0.01, 0.3);
+    this.noise(this.buses.sfx, t, { type: 'lowpass', freq: 3000, sweepTo: 500 }, 0.35 * intensity, 0.005, 0.5);
+    this.noise(this.buses.sfx, t + 0.05, { type: 'bandpass', freq: 1800, q: 2, sweepTo: 3000 }, 0.1 * intensity, 0.01, 0.3);
   }
 
-  private bird(): void {
-    const ctx = this.ctx!;
-    const t0 = ctx.currentTime;
-    const base = 2300 + Math.random() * 2200;
-    const notes = 2 + Math.floor(Math.random() * 5);
-    const pan = Math.random() * 1.6 - 0.8;
-    const far = 0.3 + Math.random() * 0.7;
-    const lp = ctx.createBiquadFilter();
-    lp.type = 'lowpass';
-    lp.frequency.value = 3000 + 5000 * far;
-    lp.connect(this.buses.ambience);
-    const style = Math.random();
-    for (let i = 0; i < notes; i++) {
-      const t = t0 + i * (0.09 + Math.random() * 0.08);
-      const f = base * (1 + (style < 0.5 ? i * 0.06 : -i * 0.05));
-      this.tone(lp, t, 'sine', f, f * (style < 0.5 ? 1.35 : 0.75), 0.035 * far * (1 - this.windLevel * 0.3), 0.01, 0.06, pan);
+  sfx(name: SfxName, volume = 1, pan = 0): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    const d = this.buses.sfx;
+    const v = volume;
+    switch (name) {
+      case 'chop':
+        this.tone(d, t, 'sine', 140, 70, 0.35 * v, 0.002, 0.12, pan);
+        this.noise(d, t, { type: 'bandpass', freq: 900, q: 1.4 }, 0.25 * v, 0.001, 0.08, pan);
+        this.noise(d, t + 0.03, { type: 'highpass', freq: 3500 }, 0.05 * v, 0.002, 0.12, pan);
+        break;
+      case 'mine':
+        this.tone(d, t, 'triangle', 1900, 1500, 0.12 * v, 0.001, 0.15, pan, 0.2);
+        this.tone(d, t, 'triangle', 2850, 2500, 0.05 * v, 0.001, 0.1, pan);
+        this.noise(d, t, { type: 'highpass', freq: 2000 }, 0.12 * v, 0.001, 0.06, pan);
+        break;
+      case 'gather':
+        this.noise(d, t, { type: 'bandpass', freq: 3200, q: 0.7, sweepTo: 1800 }, 0.12 * v, 0.03, 0.22, pan);
+        this.noise(d, t + 0.12, { type: 'bandpass', freq: 2400, q: 0.7 }, 0.08 * v, 0.02, 0.15, pan);
+        break;
+      case 'pickup':
+        this.tone(d, t, 'sine', 660, 990, 0.05 * v, 0.005, 0.1);
+        break;
+      case 'craft':
+        for (let i = 0; i < 3; i++) {
+          this.tone(d, t + i * 0.13, 'triangle', 700 - i * 60, 500, 0.1, 0.001, 0.08);
+          this.noise(d, t + i * 0.13, { type: 'bandpass', freq: 1500, q: 2 }, 0.08, 0.001, 0.05);
+        }
+        this.tone(this.buses.ui, t + 0.45, 'sine', 880, 880, 0.04, 0.01, 0.3, 0, 0.3);
+        break;
+      case 'eat':
+        for (let i = 0; i < 3; i++) this.noise(d, t + i * 0.16, { type: 'bandpass', freq: 1400 + Math.random() * 600, q: 1.5 }, 0.12, 0.005, 0.06);
+        break;
+      case 'drink':
+        for (let i = 0; i < 3; i++) this.tone(d, t + i * 0.22, 'sine', 260, 520, 0.08, 0.01, 0.1);
+        break;
+      case 'hurt':
+        this.tone(d, t, 'sawtooth', 190, 110, 0.06, 0.01, 0.22);
+        this.noise(d, t, { type: 'lowpass', freq: 600 }, 0.15, 0.003, 0.12);
+        break;
+      case 'swing':
+        this.noise(d, t, { type: 'bandpass', freq: 700, q: 1.2, sweepTo: 2400 }, 0.12, 0.05, 0.15);
+        break;
+      case 'hit':
+        this.tone(d, t, 'sine', 160, 60, 0.3, 0.002, 0.12);
+        this.noise(d, t, { type: 'lowpass', freq: 1200 }, 0.2, 0.001, 0.08);
+        break;
+      case 'ignite':
+        this.noise(d, t, { type: 'bandpass', freq: 600, q: 0.8, sweepTo: 2200 }, 0.2 * v, 0.08, 0.5, pan);
+        for (let i = 0; i < 5; i++) this.noise(d, t + 0.1 + i * 0.07, { type: 'highpass', freq: 4000 }, 0.05, 0.001, 0.02, pan);
+        break;
+      case 'extinguish':
+        this.noise(d, t, { type: 'highpass', freq: 3000, sweepTo: 6000 }, 0.12 * v, 0.02, 0.7, pan);
+        break;
+      case 'place':
+        this.tone(d, t, 'sine', 120, 70, 0.3, 0.002, 0.15);
+        this.noise(d, t, { type: 'bandpass', freq: 800 }, 0.2, 0.001, 0.08);
+        break;
+      case 'remove':
+        this.noise(d, t, { type: 'bandpass', freq: 1200, sweepTo: 500 }, 0.2, 0.005, 0.25);
+        break;
+      case 'door': {
+        const ctx = this.ctx;
+        const o = ctx.createOscillator();
+        o.type = 'sawtooth';
+        o.frequency.setValueAtTime(140, t);
+        o.frequency.linearRampToValueAtTime(220, t + 0.25);
+        o.frequency.linearRampToValueAtTime(160, t + 0.5);
+        const f = ctx.createBiquadFilter();
+        f.type = 'bandpass';
+        f.frequency.value = 900;
+        f.Q.value = 6;
+        const g = ctx.createGain();
+        this.envelope(g, t, 0.05, 0.05, 0.5);
+        o.connect(f).connect(g).connect(d);
+        o.start(t);
+        o.stop(t + 0.6);
+        this.tone(d, t + 0.5, 'sine', 110, 70, 0.15, 0.002, 0.1);
+        break;
+      }
+      case 'chest':
+        this.noise(d, t, { type: 'bandpass', freq: 700, q: 1 }, 0.12, 0.01, 0.15);
+        this.tone(d, t + 0.12, 'sine', 140, 90, 0.12, 0.002, 0.1);
+        break;
+      case 'denied':
+        this.tone(this.buses.ui, t, 'triangle', 220, 220, 0.06, 0.005, 0.1);
+        this.tone(this.buses.ui, t + 0.1, 'triangle', 180, 180, 0.06, 0.005, 0.14);
+        break;
+      case 'equip':
+        this.noise(this.buses.ui, t, { type: 'bandpass', freq: 2500, q: 2 }, 0.05, 0.002, 0.05);
+        break;
+      case 'death':
+        this.tone(this.buses.music, t, 'sine', 220, 55, 0.25, 0.5, 3.5, 0, 0.6);
+        this.tone(this.buses.music, t, 'sine', 330, 82, 0.15, 0.5, 3.5, 0, 0.6);
+        break;
+      case 'howl': {
+        const ctx = this.ctx;
+        const o = ctx.createOscillator();
+        o.type = 'sawtooth';
+        const lfo = ctx.createOscillator();
+        lfo.frequency.value = 5;
+        const lg = ctx.createGain();
+        lg.gain.value = 8;
+        lfo.connect(lg).connect(o.frequency);
+        o.frequency.setValueAtTime(380, t);
+        o.frequency.linearRampToValueAtTime(640, t + 0.7);
+        o.frequency.linearRampToValueAtTime(600, t + 1.8);
+        o.frequency.linearRampToValueAtTime(420, t + 2.6);
+        const f = ctx.createBiquadFilter();
+        f.type = 'lowpass';
+        f.frequency.value = 1100;
+        const g = ctx.createGain();
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(0.05, t + 0.5);
+        g.gain.setValueAtTime(0.05, t + 1.8);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + 2.8);
+        const p = ctx.createStereoPanner();
+        p.pan.value = Math.random() * 1.6 - 0.8;
+        o.connect(f).connect(g).connect(p).connect(this.buses.ambience);
+        this.wet(p, 0.8);
+        o.start(t);
+        lfo.start(t);
+        o.stop(t + 3);
+        lfo.stop(t + 3);
+        break;
+      }
+      case 'growl':
+        this.tone(d, t, 'sawtooth', 75, 62, 0.06 * v, 0.08, 0.7, pan);
+        this.noise(d, t, { type: 'lowpass', freq: 400 }, 0.12 * v, 0.08, 0.7, pan, true);
+        break;
+      case 'thunder':
+        this.noise(this.buses.ambience, t, { type: 'lowpass', freq: 900, sweepTo: 120 }, 0.6, 0.02, 3.5, 0, true);
+        this.noise(this.buses.ambience, t + 0.1, { type: 'lowpass', freq: 300 }, 0.4, 0.3, 2.5, 0, true);
+        break;
+      case 'unlock':
+        [523, 659, 784, 1047].forEach((f, i) => this.tone(this.buses.ui, t + i * 0.08, 'sine', f, f, 0.05, 0.01, 0.5, 0, 0.4));
+        break;
+      case 'radio':
+        this.noise(d, t, { type: 'bandpass', freq: 2200, q: 0.5 }, 0.12, 0.05, 1.2);
+        this.tone(d, t + 0.3, 'square', 820, 760, 0.015, 0.02, 0.6);
+        break;
+      case 'discover':
+        [392, 494, 587].forEach((f, i) => this.tone(this.buses.ui, t + i * 0.12, 'sine', f, f, 0.04, 0.02, 1.4, 0, 0.6));
+        break;
     }
   }
 
@@ -255,21 +463,21 @@ export class AudioEngine {
     const d = this.buses.ui;
     switch (kind) {
       case 'hover':
-        this.tone(d, t, 'sine', 1500, 1500, 0.025, 0.004, 0.04);
+        this.tone(d, t, 'sine', 1500, 1500, 0.02, 0.004, 0.04);
         break;
       case 'click':
-        this.tone(d, t, 'triangle', 700, 420, 0.08, 0.004, 0.09);
+        this.tone(d, t, 'triangle', 700, 420, 0.07, 0.004, 0.09);
         break;
       case 'open':
-        this.tone(d, t, 'sine', 520, 520, 0.05, 0.01, 0.15);
-        this.tone(d, t + 0.07, 'sine', 780, 780, 0.04, 0.01, 0.2);
+        this.tone(d, t, 'sine', 520, 520, 0.04, 0.01, 0.15);
+        this.tone(d, t + 0.07, 'sine', 780, 780, 0.035, 0.01, 0.2);
         break;
       case 'close':
-        this.tone(d, t, 'sine', 780, 780, 0.04, 0.01, 0.12);
-        this.tone(d, t + 0.06, 'sine', 520, 520, 0.04, 0.01, 0.16);
+        this.tone(d, t, 'sine', 780, 780, 0.035, 0.01, 0.12);
+        this.tone(d, t + 0.06, 'sine', 520, 520, 0.035, 0.01, 0.16);
         break;
       case 'page':
-        this.noiseBurst(d, t, { type: 'bandpass', freq: 3000, q: 0.6, sweepTo: 1200 }, 0.06, 0.02, 0.18);
+        this.noise(d, t, { type: 'bandpass', freq: 3000, q: 0.6, sweepTo: 1200 }, 0.06, 0.02, 0.18);
         break;
     }
   }

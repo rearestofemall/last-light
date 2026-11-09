@@ -29,6 +29,11 @@ describe('Terrain', () => {
 
   it('rivers hold water deeper than the bed at the plane', () => {
     for (const r of RIVERS) {
+      if (r.frozen) {
+        expect(t.waterAt(r.x)).toBeNull();
+        expect(t.surfaceAt(r.x)).toBe('ice');
+        continue;
+      }
       const w = t.waterAt(r.x);
       expect(w).not.toBeNull();
       expect(w!.depth).toBeGreaterThan(r.waterDepth * 0.7);
@@ -39,11 +44,10 @@ describe('Terrain', () => {
 
   it('walkable everywhere except the authored cliff', () => {
     const steep: number[] = [];
-    for (let x = -236; x < 434; x += 0.25) {
+    for (let x = -876; x < 1676; x += 0.25) {
       if (Math.abs(t.slopeAt(x)) > 1.35) steep.push(x);
     }
-    const cliff = RIDGES[0];
-    for (const x of steep) expect(x > cliff.x0 - 0.5 && x < cliff.x0 + cliff.cliff + 0.5).toBe(true);
+    for (const x of steep) expect(RIDGES.some((c) => x > c.x0 - 0.5 && x < c.x0 + c.cliff + 0.5)).toBe(true);
     expect(steep.length).toBeGreaterThan(0);
   });
 

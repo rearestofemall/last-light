@@ -1,14 +1,21 @@
 import type { GameEventBus } from '../core/events';
+import type { Terrain } from '../world/Terrain';
+import { Backpack, type BackpackHost } from './Backpack';
+import { BuildBar } from './BuildBar';
 import { ConfirmDialog } from './ConfirmDialog';
 import { ControlsPanel } from './ControlsPanel';
 import { HUD } from './HUD';
+import { Journal } from './Journal';
 import { LoadingScreen } from './LoadingScreen';
 import { MainMenu } from './MainMenu';
+import { MapScreen } from './MapScreen';
 import { NoteReader } from './NoteReader';
 import { PauseMenu } from './PauseMenu';
+import { DeathScreen, EndingScreen, Fader } from './Screens';
 import { SettingsPanel } from './SettingsPanel';
 import type { GameApi, Projector } from './types';
 import './styles.css';
+import './game.css';
 
 /** Composes every screen and routes "back" (Esc) to whatever is on top. */
 export class UIManager {
@@ -20,31 +27,60 @@ export class UIManager {
   readonly reader: NoteReader;
   readonly hud: HUD;
   readonly confirm: ConfirmDialog;
+  readonly backpack: Backpack;
+  readonly buildBar: BuildBar;
+  readonly map: MapScreen;
+  readonly journal: Journal;
+  readonly fader: Fader;
+  readonly death: DeathScreen;
+  readonly ending: EndingScreen;
 
   constructor(
     readonly root: HTMLElement,
     events: GameEventBus,
     api: GameApi,
+    backpackHost: BackpackHost,
+    terrain: () => Terrain,
+    loading: LoadingScreen,
   ) {
+    this.loading = loading;
     const actions = {
       openSettings: () => this.settings.open(),
       openControls: () => this.controls.open(),
       confirm: (t: string, b: string, ok: string) => this.confirm.ask(t, b, ok),
     };
     this.hud = new HUD(root, events);
+    this.buildBar = new BuildBar(root);
     this.menu = new MainMenu(root, events, api, actions);
     this.pause = new PauseMenu(root, events, api, actions);
+    this.backpack = new Backpack(root, events, backpackHost);
+    this.map = new MapScreen(root, events, terrain);
+    this.journal = new Journal(root, events);
     this.reader = new NoteReader(root, events);
     this.settings = new SettingsPanel(root, events, api.settings);
     this.controls = new ControlsPanel(root, events);
+    this.death = new DeathScreen(root, events);
+    this.ending = new EndingScreen(root, events);
     this.confirm = new ConfirmDialog(root, events);
-    this.loading = new LoadingScreen(root);
+    this.fader = new Fader(root);
+    // Keep the loading screen on top of everything created after it.
+    root.append(this.loading.el);
     events.on('note:open', (n) => this.reader.open(n.title, n.body, n.kind));
   }
 
-  /** True when a modal that blocks gameplay is open (reader, settings, dialogs). */
+  /** True when a layer that blocks gameplay is open. */
   get modalOpen(): boolean {
-    return this.reader.visible || this.settings.visible || this.controls.visible || this.confirm.open;
+    return (
+      this.reader.visible ||
+      this.settings.visible ||
+      this.controls.visible ||
+      this.confirm.open ||
+      this.backpack.visible ||
+      this.map.visible ||
+      this.journal.visible ||
+      this.death.visible ||
+      this.ending.visible
+    );
   }
 
   /** Close the top-most closable layer. Returns false if nothing was open. */
@@ -53,17 +89,11 @@ export class UIManager {
       this.confirm.cancel();
       return true;
     }
-    if (this.settings.visible) {
-      this.settings.close();
-      return true;
-    }
-    if (this.controls.visible) {
-      this.controls.close();
-      return true;
-    }
-    if (this.reader.visible) {
-      this.reader.close();
-      return true;
+    for (const p of [this.settings, this.controls, this.reader, this.backpack, this.map, this.journal]) {
+      if (p.visible) {
+        p.close();
+        return true;
+      }
     }
     return false;
   }

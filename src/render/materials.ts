@@ -4,16 +4,32 @@ import * as THREE from 'three';
 export const sharedUniforms = {
   uTime: { value: 0 },
   uWind: { value: 1 },
+  /** Seasonal foliage tint (autumn orange, winter frost). */
+  uFoliage: { value: new THREE.Color(1, 1, 1) },
+  uFoliageAmt: { value: 0 },
 };
 
 /**
  * Patches a built-in material so vertices sway with the wind, proportional to height².
  * Instance position is used as phase so neighbouring plants move out of sync.
  */
-export function addWindSway<T extends THREE.Material>(material: T, strength: number, key: string): T {
+export function addWindSway<T extends THREE.Material>(material: T, strength: number, key: string, foliage = true): T {
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = sharedUniforms.uTime;
     shader.uniforms.uWind = sharedUniforms.uWind;
+    shader.uniforms.uFoliage = sharedUniforms.uFoliage;
+    shader.uniforms.uFoliageAmt = sharedUniforms.uFoliageAmt;
+    if (foliage) {
+      // Seasonal tint for bright, green-dominant colours (deciduous leaves and grass).
+      // Dark conifer needles, bark and berries keep their colour.
+      shader.fragmentShader = 'uniform vec3 uFoliage;\nuniform float uFoliageAmt;\n' + shader.fragmentShader.replace(
+        '#include <color_fragment>',
+        `#include <color_fragment>
+        float luma = dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11));
+        float leafy = smoothstep(0.01, 0.06, diffuseColor.g - max(diffuseColor.r, diffuseColor.b)) * smoothstep(0.07, 0.12, luma);
+        diffuseColor.rgb = mix(diffuseColor.rgb, uFoliage * luma * 2.3, leafy * uFoliageAmt);`,
+      );
+    }
     shader.vertexShader =
       'uniform float uTime;\nuniform float uWind;\n' +
       shader.vertexShader.replace(

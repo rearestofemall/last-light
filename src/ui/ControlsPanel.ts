@@ -6,7 +6,16 @@ const CONTROLS: [string, string[]][] = [
   ['Sprint', ['Shift']],
   ['Jump / swim up', ['Space']],
   ['Drop through platform', ['S', '+', 'Space']],
-  ['Interact / read', ['E']],
+  ['Interact · gather · read', ['E']],
+  ['Secondary action (fill, put out)', ['R']],
+  ['Use held item · attack · eat', ['F', '/', 'Click']],
+  ['Select hotbar slot', ['1', '–', '6']],
+  ['Backpack', ['Tab']],
+  ['Crafting', ['C']],
+  ['Build mode', ['B']],
+  ['Demolish (in build mode)', ['X']],
+  ['Map', ['M']],
+  ['Journal', ['J']],
   ['Zoom camera', ['Mouse wheel']],
   ['Pause', ['Esc']],
 ];
@@ -20,7 +29,7 @@ export class ControlsPanel {
     private events: GameEventBus,
   ) {
     const rows = CONTROLS.map(([label, keys]) =>
-      h('div', { class: 'control-row' }, h('span', {}, label), h('span', { class: 'keys' }, ...keys.map((k) => (k === '+' ? h('i', {}, '+') : h('kbd', {}, k))))),
+      h('div', { class: 'control-row' }, h('span', {}, label), h('span', { class: 'keys' }, ...keys.map((k) => (k === '+' || k === '/' || k === '–' ? h('i', {}, k) : h('kbd', {}, k))))),
     );
     this.el = h(
       'div',

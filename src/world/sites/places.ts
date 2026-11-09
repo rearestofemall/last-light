@@ -3,7 +3,7 @@ import { Rng } from '../../core/rng';
 import { worldUvBox } from '../../render/textures';
 import { RIVERS } from '../WorldDef';
 import { buildCabin, CABIN_FLOOR, furniture } from './cabin';
-import { boulder, inspectable, mesh, oneway, readable, type SiteContext, signTexture, solid } from './kit';
+import { boulder, fixedLight, inspectable, lootCrate, mesh, oneway, readable, type SiteContext, signTexture, solid } from './kit';
 
 /** Where the player wakes: a cold camp with J.'s note. */
 export function campsite(ctx: SiteContext, x: number): void {
@@ -72,6 +72,7 @@ export function campsite(ctx: SiteContext, x: number): void {
   seat.rotation.y = 0.3;
   mesh(new THREE.CylinderGeometry(0.2, 0.16, 0.25, 10), mats.metal, 3.0, 0.13, -1.7, grp);
   mesh(new THREE.BoxGeometry(0.45, 0.55, 0.3), new THREE.MeshStandardMaterial({ color: 0x5a6b7a, roughness: 0.95 }), -1.8, 0.27, -2.2, grp).rotation.z = 0.5;
+  lootCrate(ctx, 'camp-pack', x - 1.8, g, -2.2, 'Your backpack’s spare pocket', [['berries', 4], ['water_clean', 1], ['bottle', 1], ['bandage', 1], ['torch', 1]], 8, false);
 }
 
 /** Trailhead sign board. */
@@ -174,6 +175,10 @@ export function rangerStation(ctx: SiteContext, x: number): void {
   readable(ctx, 'ranger-log', x + 0.2, cab.floorY + 1.0, "Ranger's log");
   inspectable(ctx, 'radio', x + 1.3, cab.floorY + 1.0, 'Field radio', 0.8);
   readable(ctx, 'j-note-2', x - 3.6, cab.floorY + 2.4, 'Note in the loft');
+  readable(ctx, 'ranger-manual', x + 3.6, cab.floorY + 1.0, 'Field manual on the shelf', 'Read', 1);
+  lootCrate(ctx, 'ranger-crate', x + 5.2, cab.floorY, -0.3, 'Supply crate', [['canned_food', 2], ['cloth', 3], ['fuel', 1], ['bottle', 1], ['fiber', 4]]);
+  lootCrate(ctx, 'ranger-loft-crate', x - 5.2, cab.floorY + 2.05, -0.4, 'Loft crate', [['hide', 2], ['bandage', 1], ['wood', 6]], 8);
+  fixedLight(ctx, 'ranger-lamp', 'lamp', x - 0.6, cab.floorY + 2.6, -2.5, 300, false);
 
   // Sign over the door
   const tex = signTexture([{ text: 'RANGER STATION 4', size: 52 }], 512, 110);
@@ -206,24 +211,59 @@ export function huntersLodge(ctx: SiteContext, x: number): void {
   mesh(new THREE.BoxGeometry(1.2, 0.08, 0.12), ctx.mats.woodDark, -3.0, CABIN_FLOOR + 2.2, -3.85, p);
   mesh(new THREE.BoxGeometry(1.2, 0.08, 0.12), ctx.mats.woodDark, -3.0, CABIN_FLOOR + 1.6, -3.85, p);
   readable(ctx, 'hunter-journal', x - 1.2, cab.floorY + 1.0, "Hunter's journal");
+  readable(ctx, 'photo-1', x + 2.6, cab.floorY + 1.0, 'Photograph above the bed', 'Look at', 1);
+  lootCrate(ctx, 'lodge-crate', x + 3.4, cab.floorY, -0.6, 'Hunter’s chest', [['hide', 3], ['raw_meat', 2], ['fuel', 2], ['fiber', 6], ['knife', 1]], 8, false);
+  fixedLight(ctx, 'lodge-lamp', 'lamp', x + 0.6, cab.floorY + 2.5, -2.5, 600, true);
 }
 
 /** Rockslide sealing the western trail (Halcyon Pass, opens in a later milestone). */
 export function westBlockade(ctx: SiteContext, x: number): void {
   const g = ctx.terrain.heightAt(x);
   const rng = new Rng(99);
+  const pile = new THREE.Group();
+  ctx.group.add(pile);
   for (let i = 0; i < 26; i++) {
     const s = rng.range(1.2, 3.4);
     const geo = new THREE.DodecahedronGeometry(s, 0);
     const bx = x + rng.range(-5, 5);
     const bz = rng.range(-22, 10);
     const by = g + rng.range(-0.5, 3 + (5 - Math.abs(bx - x)) * 0.8) - Math.max(0, bz) * 0.08;
-    const m = mesh(geo, ctx.mats.rock, bx, by, bz, ctx.group);
+    const m = mesh(geo, ctx.mats.rock, bx, by, bz, Math.abs(bz) < 6 ? pile : ctx.group);
     m.rotation.set(rng.float() * 3, rng.float() * 3, rng.float() * 3);
     m.scale.y = rng.range(0.6, 1);
   }
-  solid(ctx, x - 6, x + 3.5, g - 6, g + 14, 'rock', 'blockade:west');
-  inspectable(ctx, 'rockslide', x + 5.2, g + 1, 'Rockslide', 2);
+  const wall = solid(ctx, x - 6, x + 3.5, g - 6, g + 14, 'rock', 'blockade:west');
+  let progress = 0;
+  const it = {
+    id: 'rockslide',
+    x: x + 5.2,
+    y: g + 1,
+    radius: 2.2,
+    verb: '',
+    label: '',
+    prompt: () => (ctx.host.hasTool('pickaxe') ? `Dig through the rockslide (${progress}/6)` : 'Examine the rockslide'),
+    onInteract: () => {
+      if (!ctx.host.hasTool('pickaxe')) {
+        ctx.events.emit('toast', { text: 'A fresh rockslide buries the trail to Halcyon Pass. With a pickaxe, you could dig through.', kind: 'info', duration: 5 });
+        return;
+      }
+      if (!ctx.host.beginWork()) return;
+      ctx.host.wearTool('pickaxe');
+      ctx.events.emit('sfx', { name: 'mine', x });
+      progress++;
+      if (progress >= 6) ctx.story.flags['pass-cleared'] = true;
+    },
+  };
+  ctx.interactions.add(it);
+  ctx.gates.push({
+    flag: 'pass-cleared',
+    apply: () => {
+      ctx.collision.remove(wall);
+      ctx.group.remove(pile);
+      ctx.interactions.remove(it);
+      ctx.events.emit('toast', { text: 'The way to Halcyon Pass is open. Cold air pours down from the north.', kind: 'good', duration: 6 });
+    },
+  });
 }
 
 /** The washed-out highway bridge to the city (opens in a later milestone). */
@@ -280,6 +320,55 @@ export function eastBlockade(ctx: SiteContext, x0: number, x1: number): void {
   const deck = mesh(worldUvBox(7, 0.7, 7, 2), ctx.mats.concrete, x1 + 5, deckY - 0.6, 0, ctx.group);
   deck.rotation.z = -0.35;
   for (let i = 0; i < 6; i++) mesh(new THREE.DodecahedronGeometry(0.4 + (i % 3) * 0.2, 0), ctx.mats.concrete, x1 + 2 + i * 0.9, deckY - 1.4 - i * 0.2, -1 + (i % 2) * 1.5, ctx.group);
-  solid(ctx, x1, x1 + 10, by - 6, by + 14, 'rock', 'blockade:east');
-  inspectable(ctx, 'bridge', bx - 1, by + 1, 'Collapsed bridge', 2);
+  solid(ctx, x1, x1 + 14, by - 6, by + 14, 'rock', 'gorge');
+  readable(ctx, 'bridge-sign', bx - 2.5, by + 1.4, 'Notice', 'Read', 1);
+  const far = x1 + 17;
+  const farY = t.heightAt(far);
+  const rope = new THREE.Group();
+  rope.visible = false;
+  ctx.group.add(rope);
+  const rl = Math.hypot(far - bx, farY - by);
+  const ropeMesh = mesh(new THREE.CylinderGeometry(0.03, 0.03, rl, 5), ctx.mats.bone, (bx + far) / 2, (by + farY) / 2 - 1.2, 0.4, rope, false);
+  ropeMesh.rotation.z = Math.PI / 2 + Math.atan2(farY - by, far - bx);
+  ctx.interactions.add({
+    id: 'gorge-west',
+    x: bx + 0.8,
+    y: by + 1,
+    radius: 1.8,
+    verb: '',
+    label: '',
+    priority: 0.3,
+    prompt: () => (ctx.story.flags['gorge-crossed'] ? 'Climb across the gorge' : ctx.inventory.count('rope') > 0 ? 'Anchor a rope and climb into the gorge' : 'Examine the collapsed bridge'),
+    onInteract: () => {
+      if (ctx.story.flags['gorge-crossed']) return ctx.host.travel(far, farY, 'You climb across the gorge');
+      if (ctx.inventory.count('rope') === 0) {
+        ctx.events.emit('toast', { text: 'The bridge has fallen into the gorge. With a rope, you could climb down and across.', kind: 'info', duration: 5 });
+        return;
+      }
+      ctx.inventory.remove('rope', 1);
+      ctx.story.flags['gorge-crossed'] = true;
+      ctx.host.travel(far, farY, 'You lower yourself down the rope and climb the far side');
+    },
+  });
+  ctx.interactions.add({ id: 'gorge-east', x: far - 0.5, y: farY + 1, radius: 1.8, verb: '', label: '', priority: 0.3, prompt: () => 'Climb back across the gorge', enabled: () => Boolean(ctx.story.flags['gorge-crossed']), onInteract: () => ctx.host.travel(bx - 0.5, by, 'You climb back across the gorge') });
+  ctx.gates.push({ flag: 'gorge-crossed', apply: () => (rope.visible = true) });
+}
+
+/** Ledges up a western cliff face, as on Eastridge (reused for Whiteback Ridge). */
+export function cliffLedges(ctx: SiteContext, foot: number): void {
+  const t = ctx.terrain;
+  const g0 = t.heightAt(foot - 9.5);
+  const top = t.heightAt(foot + 4.5);
+  const rise = top - g0;
+  const steps: [number, number, number][] = [
+    [foot - 8.7, foot - 5.1, 0.26],
+    [foot - 5.1, foot - 1.9, 0.52],
+    [foot - 1.9, foot + 2.1, 0.76],
+  ];
+  steps.forEach(([x0, x1, f], i) => {
+    const h = g0 + rise * f;
+    const base = Math.min(t.heightAt(x0), t.heightAt(x1)) - 0.6;
+    mesh(boulder(x1 - x0 + 0.2, h - base, 4.2 + i * 0.6, 7 + i), ctx.mats.rock, (x0 + x1) / 2, base, -0.4 - i * 0.3, ctx.group);
+    solid(ctx, x0, x1, base, h, 'rock');
+  });
 }

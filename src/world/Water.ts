@@ -8,9 +8,9 @@ import type { RiverDef } from './WorldDef';
  * River surfaces: a strip that follows the river's depth profile, with vertex waves,
  * analytic normals and flowing streaks added in the fragment stage.
  */
-export function createWaterMaterial(): THREE.MeshStandardMaterial {
+export function createWaterMaterial(color = 0x2f5a5c): THREE.MeshStandardMaterial {
   const m = new THREE.MeshStandardMaterial({
-    color: 0x2f5a5c,
+    color,
     roughness: 0.08,
     metalness: 0.15,
     transparent: true,
@@ -46,6 +46,7 @@ export function createWaterMaterial(): THREE.MeshStandardMaterial {
       );
   };
   m.customProgramCacheKey = () => 'river-water';
+  m.userData.water = true;
   return m;
 }
 

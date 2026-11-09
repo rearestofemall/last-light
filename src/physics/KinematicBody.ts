@@ -61,13 +61,13 @@ export function moveBody(world: CollisionWorld, b: Body, dt: number, p: MovePara
       res.blockedX = true;
     }
     // Terrain walls and slopes.
-    const newG = world.groundAt(nx, hw);
+    const newG = world.groundAt(nx, hw, b.y);
     if (newG > b.y + EPS) {
       const rise = newG - b.y;
       // Measure slope over a short look-ahead so small sharp steps can be climbed while
       // sustained steep faces (cliffs) cannot.
       const dir = Math.sign(nx - b.x);
-      const ahead = world.groundAt(nx + dir * SLOPE_PROBE, hw);
+      const ahead = world.groundAt(nx + dir * SLOPE_PROBE, hw, b.y);
       const tooSteep = b.grounded && b.groundCollider === null && (ahead - b.y) / SLOPE_PROBE > p.maxSlope;
       if (rise > p.maxStep || tooSteep) {
         nx = b.x;
@@ -154,8 +154,8 @@ export function supportBelow(
   dropThrough: boolean,
 ): { y: number; surface: Surface; collider: Collider | null } {
   const hw = b.halfWidth;
-  let y = world.groundAt(b.x, hw);
-  let surface: Surface = world.terrain.surfaceAt(b.x);
+  let y = world.groundAt(b.x, hw, b.y);
+  let surface: Surface = y === -Infinity ? 'rock' : world.terrain.surfaceAt(b.x);
   let collider: Collider | null = null;
   const cs = world.query(b.x - hw, b.x + hw, scratch);
   for (const c of cs) {
