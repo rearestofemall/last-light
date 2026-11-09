@@ -1,6 +1,7 @@
 # The Last Light
 
-A 2.5D survival and exploration game for the browser, built with Three.js, TypeScript and Vite.
+A third-person, open-world 3D survival and exploration game for the browser, built with Three.js, TypeScript
+and Vite.
 
 > Weeks ago every powered circuit in the world went dark in the same second.
 > You wake in a cold camp in the Verdant Woods. J. has gone ahead for help.
@@ -17,25 +18,34 @@ npm test           # unit tests
 
 ## Controls
 
+Click the game to capture the mouse (Esc releases it). Without pointer lock, hold the right mouse button and drag
+to look around.
+
 | Action | Keys |
 |---|---|
-| Move / sprint | A D (or ← →) / Shift |
+| Move / sprint | W A S D (camera-relative) / Shift |
+| Look around · zoom | Mouse · mouse wheel |
 | Jump / swim up | Space (hold for height) |
-| Drop through a floor | S + Space |
+| Drop through a floor | Z + Space |
 | Interact · gather · read · open | E |
 | Secondary action (fill a container, put out a fire) | R |
 | Use the held item: eat, drink, attack, lantern on/off | F or left click |
 | Hotbar | 1–6 (Shift + wheel cycles) |
 | Backpack · Crafting · Build · Map · Journal | Tab · C · B · M · J |
-| Demolish (in build mode) | X or right click |
-| Zoom · Pause | Mouse wheel · Esc |
+| In build mode: place · rotate · demolish | Click · R · X (or right click) |
+| Pause | Esc |
 
 ## What's in the game
 
-- **Four connected regions** on one continuous strip of land: the **Verdant Woods**, the **Frostlands**, the
-  **Forgotten City** and the **Drowned Coast**. Gates open as the story progresses: a rope to cross the gorge,
-  the metro tunnel under the collapsed overpass, and a pickaxe to dig through the rockslide at Halcyon Pass.
-  There are also underground levels: the Union Line metro, the sea caves and the Halcyon lab.
+- **An open world** of about 2.5 × 0.8 km in one mountain-ringed valley, streamed in chunks as you walk. It has
+  four regions: the **Verdant Woods**, the **Frostlands**, the **Forgotten City** and the **Drowned Coast**.
+  An old road runs through them, but you can wander anywhere. Hills, forests, meadows, rivers, a frozen lake,
+  city blocks and a beach reach out to the mountain walls. About 46 wild places sit off the road: hunters'
+  camps, huts, deer stands, wrecked cars, caches and beached boats, each with loot. Story gates open as you
+  progress: a rope crosses the gorge, the metro tunnel runs under the collapsed overpass, and a pickaxe digs
+  through the rockslide at Halcyon Pass. Underground there are the Union Line metro, the sea caves and the
+  Halcyon lab. Cabins, apartments and the lighthouse have walkable stairs, and their walls and roofs fade
+  when you step inside.
 - **Survival:** health, hunger, thirst, warmth, stamina and energy all have consequences. Starving, thirst and
   freezing drain health. Low stamina stops you sprinting and jumping, and low energy slows you down. You can get
   soaked, get sick from raw meat or river water, take fall damage, die, and wake again where you last slept.
@@ -49,12 +59,14 @@ npm test           # unit tests
   animals.
 - **Gathering & crafting:** trees, rocks, berry bushes, grass, herbs, fallen branches and scrap all deplete and
   regrow. There are 27 recipes; some need a fire or a workbench, and most are learned from documents you find.
-- **Building:** floors, walls, doors, back walls, windows, roofs, campfires, chests, bedrolls, beds, tables,
-  lamps and workbenches snap to a grid with support rules and a valid/invalid preview. Structures shelter you
-  from rain and cold, and everything you build persists.
+- **Building:** aim with the crosshair to place floors, walls, doors, windows, roofs and multi-storey builds
+  on a 2 m grid. You can also place campfires, chests, bedrolls, beds, tables, lamps and workbenches, and
+  rotate them with R. Pieces follow support rules, and a ghost preview shows whether a spot is valid. An
+  enclosed, roofed room shelters you from rain and cold, and its roof and near walls hide while you're
+  inside. Everything you build persists.
 - **Story:** a 15-step main questline that reveals the cause of the blackout, plus optional photographs, radio
-  transmissions and journals. The map tracks explored land and landmarks; the journal keeps your objectives
-  and documents.
+  transmissions and journals. The top-down map has hill shading and clears its fog of war as you explore. It
+  marks landmarks and the wild places you've discovered. The journal keeps your objectives and documents.
 - **Audio:** everything is synthesised at runtime. That includes adaptive music per region, time of day and
   danger, ambience, footsteps that change with the surface, and wildlife.
 - **Saves:** IndexedDB autosaves every 90 seconds, and you can save manually. Saves are versioned (with
@@ -76,8 +88,12 @@ The game is designed to run on modest hardware without changing the art:
 - **Fewer shadow updates on lower settings:** shadows refresh every 2nd (Medium) or 3rd (Low) frame. On Low,
   materials switch to Lambert shading and vegetation is thinner.
 - **First launch on a weak device** (≤4 cores, ≤4 GB memory, or a phone/tablet) starts on Low.
-- **Efficient rendering:** a fixed pool of point lights means shaders never recompile. Vegetation is instanced
-  and streamed in chunks, static geometry is frozen, and resource nodes are culled in spatial buckets.
+- **Efficient rendering:**
+  - A fixed pool of point lights means shaders never recompile.
+  - Terrain and vegetation stream in 48 m chunks. Each chunk's vegetation is merged into one mesh per material
+    and sways in a vertex shader, and small ground cover only exists near you.
+  - Building props are baked into one mesh per material per 64 m cell. Anything past the fog isn't drawn.
+  - Foliage between the camera and the player dithers away instead of blocking the view.
 
 Settings → Graphics has quality presets, a shadow toggle, render scale and an adaptive-resolution toggle.
 
@@ -86,9 +102,9 @@ Settings → Graphics has quality presets, a shadow toggle, render scale and an 
 ```
 src/core         game shell, state machine, loop, input, events, settings, noise/RNG
 src/gameplay     Session (owns and orders all gameplay systems), player actions/equipment
-src/render       renderer, camera, sky, atmosphere, lighting, parallax, weather FX, particles
+src/render       renderer, third-person camera, sky, far mountains, atmosphere, lighting, weather FX, particles
 src/world        world layout, terrain, chunk streaming, vegetation, resources, water, sites/
-src/physics      2D kinematic collision in the gameplay plane
+src/physics      3D kinematic bodies against terrain and box colliders (spatial hash)
 src/player       movement controller and procedural animated character
 src/survival     vitals and their rules
 src/inventory    items, inventory, containers

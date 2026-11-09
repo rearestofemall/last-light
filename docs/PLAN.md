@@ -12,13 +12,38 @@ dependencies. Everything below is new.
 | Rendering | Three.js r170, `WebGLRenderer`, ACES tone mapping, sRGB output | Mature, small, no engine lock-in |
 | Language / build | TypeScript (strict) + Vite 6 | Fast HMR, tree-shaken production build |
 | Tests | Vitest for pure logic (terrain, collision, saves, inventory, crafting) | Gameplay rules are tested without a GPU |
-| Physics | **Custom 2D kinematic physics** in the XY gameplay plane | Movement is constrained to one plane, so a 3D physics engine would add weight without adding anything |
+| Physics | **Custom 3D kinematic physics**: AABB colliders in a 2D spatial hash over X/Z, plus the analytic terrain heightfield | Characters only need move-and-slide, step-up, slopes and one-way floors, which is much lighter than a rigid-body engine |
 | Persistence | IndexedDB (hand-written thin wrapper), versioned schema with migrations and a backup slot | No dependency; corruption recovery |
 | Preferences | `localStorage` (quality, volume) | Per-device, not part of a save |
 | Audio | Web Audio API, **fully synthesised** (noise + oscillators + filters) | No copyrighted or binary assets; tiny download |
 | Art | Procedural low-poly geometry, vertex colours, small generated canvas textures | Original assets, consistent stylised look, quick to load |
 
-### The 2.5D model
+### The 3D open world (current)
+
+The game began as a 2.5D side-view game, described below, and was then converted to a full 3D, third-person
+open world. Gameplay content stayed the same. What changed:
+
+* **The world is the whole valley.** It spans `x ∈ [-880, 1680]` and `z ∈ [-390, 390]`, closed by mountain
+  walls; the north shore of the coast drops into the sea. The old road still runs along `z ≈ 0` and the story
+  sites sit on it. Away from the road the heightfield grows into hills and forests. Authored ridges taper out
+  within ~40 m of the road. Rivers meander across the valley with calm, level banks. Lake Tamsin's ice is part of
+  the terrain itself.
+* **Physics** is 3D. Bodies move per axis (X, then Z, then Y) against the terrain (step-up, slope limit) and
+  against box colliders, which are `solid` or `oneway`. Underground levels are detected by depth below the
+  terrain.
+* **Camera.** A perspective third-person orbit camera (pointer lock, or right-drag) lifts over slopes before it
+  pulls in. It stays under the ceiling inside multi-storey buildings. Foliage between it and the player
+  dithers away.
+* **Streaming.** Terrain, vegetation and resource nodes stream in a 2D ring of 48 m chunks. Site props are
+  baked per 64 m cell and distance-culled beyond the fog.
+* **Wild places.** 46 procedural points of interest off the road are discovered on approach and shown on the
+  top-down map. The map has a fog of war that clears within ~30 m of where you've been.
+* **Building** uses a 2 × 2 m grid with X/Z edges and storeys. You aim with a crosshair ray-cast, and shelter
+  comes from enclosed, roofed rooms.
+* **Saves** are version 3. Migration 2 → 3 adds the player's Z and heading, and refunds 2.5D structures to the
+  inventory.
+
+### The original 2.5D model
 
 * The world is a long strip along **X**. **Y** is up. The **gameplay plane is z = 0**.
 * The player, wildlife paths, interactables and buildings live on (or straddle) z = 0. Collision is solved in 2D (XY).
