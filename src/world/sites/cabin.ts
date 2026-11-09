@@ -305,7 +305,7 @@ export function buildCabin(ctx: SiteContext, spec: CabinSpec): CabinResult {
     if (m.isMesh && fade.materials.includes(m.material as THREE.Material)) fade.meshes.push(m);
   });
   ctx.fadeables.push(fade);
-  ctx.interiors.push({ x0: spec.x - W / 2, x1: spec.x + W / 2, y0: g, y1: g + fy + TH, z0: zb + oz, z1: zf + oz });
+  ctx.interiors.push({ x0: spec.x - W / 2, x1: spec.x + W / 2, y0: g, y1: g + fy + TH, z0: zb + oz, z1: zf + oz, floor0: g + fy, storeyH: H, storeys: nf });
 
   return { group, floorY: g + fy, x: spec.x, storeys };
 }

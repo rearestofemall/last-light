@@ -169,6 +169,18 @@ export class World {
     return this.interiors.some((i) => x > i.x0 && x < i.x1 && z > i.z0 && z < i.z1 && y > i.y0 - 0.2 && y < i.y1);
   }
 
+  /** Ceiling of the storey the player is on, inside multi-storey buildings (null elsewhere or on the top floor). */
+  ceilingAt(x: number, y: number, z: number): number | null {
+    for (const i of this.interiors) {
+      if (!i.storeys || i.storeys < 2 || i.floor0 === undefined || !i.storeyH) continue;
+      if (!(x > i.x0 - 0.5 && x < i.x1 + 0.5 && z > i.z0 - 0.5 && z < i.z1 + 0.5 && y > i.y0 - 0.2 && y < i.y1)) continue;
+      const k = Math.floor((y - i.floor0 + 0.4) / i.storeyH);
+      if (k >= i.storeys - 1) return null;
+      return i.floor0 + (k + 1) * i.storeyH - 0.3;
+    }
+    return null;
+  }
+
   /** Nearest undiscovered-or-not point of interest within range. */
   poiNear(x: number, z: number, range: number): Poi | null {
     for (const p of this.pois) if (Math.hypot(p.x - x, p.z - z) < range) return p;

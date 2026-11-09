@@ -565,6 +565,7 @@ export class Session implements BackpackHost {
     else this.actions.update(dt, inp, precip, this.shelter > 0);
     this.model.holdingLight = this.actions.lightRadius > 0;
     this.interactions.update(b.x, b.y, b.z, inp, !this.build.active);
+    this.build.occlude(b.x, b.y, b.z, this.rig.camera.position.x, this.rig.camera.position.z);
 
     // World simulation
     this.clock.update(dt);
@@ -624,7 +625,7 @@ export class Session implements BackpackHost {
     const ray = this.raycaster.ray;
     const b = this.player.body;
     this.raycaster.far = 40;
-    const hits = this.raycaster.intersectObject(this.build.group, true).filter((h) => !(h.object as THREE.Mesh).userData.ghost);
+    const hits = this.raycaster.intersectObject(this.build.group, true).filter((h) => !h.object.userData.ghost && !h.object.userData.occMat);
     let best: THREE.Vector3 | null = null;
     for (const h of hits) {
       if (h.point.distanceTo(new THREE.Vector3(b.x, b.y + 1, b.z)) < 12) {

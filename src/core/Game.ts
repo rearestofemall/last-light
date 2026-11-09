@@ -276,6 +276,7 @@ export class Game implements GameApi {
       this.input.lookDX = this.input.lookDY = 0;
       s.player.cameraYaw = this.rig.yaw;
       const p = s.model.root.position;
+      this.rig.ceiling = s.world.ceilingAt(p.x, p.y, p.z);
       this.rig.follow(dt, p.x, p.y, p.z);
       sharedUniforms.uFocus.value.set(p.x, p.y + 1.1, p.z);
     } else sharedUniforms.uFocus.value.set(0, -9999, 0);

@@ -20,6 +20,8 @@ export class CameraRig {
   sensitivity = 0.0025;
   /** Height function for camera collision. */
   ground: ((x: number, z: number) => number) | null = null;
+  /** Inside multi-storey buildings: keep the camera under this height. */
+  ceiling: number | null = null;
   private shake = 0;
   private shakeT = 0;
   private aspect = 16 / 9;
@@ -132,6 +134,7 @@ export class CameraRig {
       const g = this.ground(this.camera.position.x, this.camera.position.z) + 0.35;
       if (this.camera.position.y < g) this.camera.position.y = g;
     }
+    if (this.ceiling !== null && this.camera.position.y > this.ceiling) this.camera.position.y = Math.max(this.ceiling, f.y - 0.6);
     this.camera.lookAt(f.x + ox, f.y + oy, f.z);
     this.camera.updateMatrixWorld();
   }

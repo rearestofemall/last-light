@@ -86,6 +86,10 @@ export interface Interior {
   y1: number;
   z0: number;
   z1: number;
+  /** Multi-storey buildings: lowest floor height, storey height and count (camera stays below the ceiling). */
+  floor0?: number;
+  storeyH?: number;
+  storeys?: number;
 }
 
 /** Something in the world that changes once a story flag is set (rockslide cleared, etc.). */

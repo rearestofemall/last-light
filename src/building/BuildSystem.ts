@@ -91,6 +91,37 @@ export class BuildSystem {
     return this.placed.get(keyOf(slot, i, j, level, edge));
   }
 
+  /** Open sides of the roofed room containing cell (i, j): walls (doors included) close a side. */
+  private openings(i: number, j: number, level: number): number {
+    const roofed = (a: number, b: number) => !!(this.at('roof', a, b, level) ?? this.at('floor', a, b, level + 1));
+    const seen = new Set<string>([`${i},${j}`]);
+    const queue: [number, number][] = [[i, j]];
+    let open = 0;
+    while (queue.length && seen.size < 40) {
+      const [a, b] = queue.shift()!;
+      const e = this.edgesOf(a, b, level);
+      const steps: [number, number, boolean][] = [
+        [a - 1, b, !!e[0]],
+        [a + 1, b, !!e[1]],
+        [a, b - 1, !!e[2]],
+        [a, b + 1, !!e[3]],
+      ];
+      for (const [na, nb, wall] of steps) {
+        if (wall) continue;
+        if (!roofed(na, nb)) {
+          open++;
+          continue;
+        }
+        const k = `${na},${nb}`;
+        if (!seen.has(k)) {
+          seen.add(k);
+          queue.push([na, nb]);
+        }
+      }
+    }
+    return open;
+  }
+
   /** The four edges around cell (i, j). */
   private edgesOf(i: number, j: number, level: number): (Placed | undefined)[] {
     return [this.at('edge', i, j, level, 'x'), this.at('edge', i + 1, j, level, 'x'), this.at('edge', i, j, level, 'z'), this.at('edge', i, j + 1, level, 'z')];
@@ -123,8 +154,7 @@ export class BuildSystem {
       if (!r) continue;
       const roofY = r.base + (level + 1) * LEVEL_H;
       if (roofY < y + 1.5 || roofY > y + 7) continue;
-      const walls = this.edgesOf(i, j, level).filter(Boolean).length;
-      best = Math.max(best, walls >= 3 ? 2 : 1);
+      best = Math.max(best, this.openings(i, j, level) <= 1 ? 2 : 1);
     }
     return best;
   }
@@ -205,7 +235,9 @@ export class BuildSystem {
       [, edge, i, j] = opts[0];
     }
     const base = this.baseFor(i, j);
-    const level = Math.max(0, Math.min(MAX_LEVEL, Math.floor((hit.y - base + 0.4) / LEVEL_H)));
+    // Roofs belong to the storey whose wall tops you aim at.
+    const lift = slot === 'roof' ? -0.5 : 0.4;
+    const level = Math.max(0, Math.min(MAX_LEVEL, Math.floor((hit.y - base + lift) / LEVEL_H)));
     const c: Candidate = { piece, slot, i, j, level, base, edge, rot: this.rotation, ok: false, reason: '' };
     c.reason = this.validate(c);
     c.ok = c.reason === '';
@@ -330,6 +362,7 @@ export class BuildSystem {
     if (this.removeTarget) restore(this.removeTarget);
     this.removeTarget = p;
     if (p) {
+      this.setHidden(p, false);
       p.group.traverse((o) => {
         const m = o as THREE.Mesh;
         if (m.isMesh) {
@@ -508,6 +541,54 @@ export class BuildSystem {
       const f = this.footprint(p);
       p.light.sheltered = this.shelterAt((f.x0 + f.x1) / 2, p.base + p.level * LEVEL_H, (f.z0 + f.z1) / 2) > 0;
     }
+  }
+
+  /**
+   * While the player is inside one of their buildings, hide the roof, upper storeys and the
+   * walls on the camera's side (they still cast shadows) so the room stays visible.
+   */
+  occlude(px: number, py: number, pz: number, camX: number, camZ: number): void {
+    const inside = this.placed.size > 0 && this.shelterAt(px, py + 0.1, pz) > 0;
+    if (!inside && !this.occluding) return;
+    this.occluding = inside;
+    let dx = camX - px;
+    let dz = camZ - pz;
+    const dl = Math.hypot(dx, dz) || 1;
+    dx /= dl;
+    dz /= dl;
+    for (const p of this.placed.values()) {
+      let hide = false;
+      if (inside && p !== this.removeTarget) {
+        const f = this.footprint(p);
+        const cx = (f.x0 + f.x1) / 2;
+        const cz = (f.z0 + f.z1) / 2;
+        const d = Math.hypot(cx - px, cz - pz);
+        const myLevel = Math.floor((py - p.base + 0.4) / LEVEL_H);
+        const slot = PIECES[p.piece].slot;
+        if (d < 12 && (p.level > myLevel || (slot === 'roof' && p.level === myLevel))) hide = true;
+        else if (slot === 'edge' && p.level === myLevel && d < 7 && (cx - px) * dx + (cz - pz) * dz > 0.4) hide = true;
+      }
+      this.setHidden(p, hide);
+    }
+  }
+
+  private occluding = false;
+  private static hiddenMat = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
+
+  private setHidden(p: Placed, hide: boolean): void {
+    if (!!p.group.userData.hidden === hide) return;
+    p.group.userData.hidden = hide;
+    p.group.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh || m.userData.ghost) return;
+      if (hide) {
+        m.userData.occMat = m.material;
+        m.material = BuildSystem.hiddenMat;
+      } else if (m.userData.occMat) {
+        m.material = m.userData.occMat;
+        delete m.userData.occMat;
+      }
+    });
   }
 
   /** Workbench within reach of a point? */
