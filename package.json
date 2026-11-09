@@ -1,0 +1,23 @@
+{
+  "name": "the-last-light",
+  "private": true,
+  "version": "0.1.0",
+  "description": "THE LAST LIGHT - a 2.5D survival and exploration game for the browser",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "three": "0.170.0"
+  },
+  "devDependencies": {
+    "@types/three": "0.170.0",
+    "typescript": "5.6.3",
+    "vite": "6.4.6",
+    "vitest": "2.1.9"
+  }
+}
