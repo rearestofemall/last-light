@@ -118,13 +118,26 @@ export class MapScreen {
     g.imageSmoothingEnabled = true;
     g.drawImage(this.relief, ox, oy, worldW * scale, worldH * scale);
     // Fog of war over unexplored cells.
-    g.fillStyle = 'rgba(217, 205, 177, 0.88)';
-    const cell = MAP_BIN * scale;
-    for (let x = PLAYABLE.min; x < PLAYABLE.max; x += MAP_BIN) {
-      for (let z = -VALLEY_HALF; z < VALLEY_HALF; z += MAP_BIN) {
-        if (!story.explored.has(exploredKey(x + 1, z + 1))) g.fillRect(sx(x) - 0.5, sy(z) - 0.5, cell + 1, cell + 1);
+    // Painted opaque into a low-res mask, then laid over once: no seams between cells.
+    const cols = Math.ceil(worldW / MAP_BIN);
+    const rows = Math.ceil(worldH / MAP_BIN);
+    const fog = document.createElement('canvas');
+    fog.width = cols;
+    fog.height = rows;
+    const fg = fog.getContext('2d')!;
+    fg.fillStyle = '#d9cdb1';
+    for (let ci = 0; ci < cols; ci++) {
+      for (let cj = 0; cj < rows; cj++) {
+        const x = PLAYABLE.min + ci * MAP_BIN;
+        const z = -VALLEY_HALF + cj * MAP_BIN;
+        if (!story.explored.has(exploredKey(x + 1, z + 1))) fg.fillRect(ci, cj, 1, 1);
       }
     }
+    g.save();
+    g.globalAlpha = 0.88;
+    g.imageSmoothingEnabled = true;
+    g.drawImage(fog, ox, oy, cols * MAP_BIN * scale, rows * MAP_BIN * scale);
+    g.restore();
     // Region names
     g.fillStyle = '#3d3427';
     g.font = `600 11px Inter, system-ui, sans-serif`;

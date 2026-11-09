@@ -12,6 +12,7 @@ export class CameraRig {
   /** Horizontal angle; 0 = camera south of the player looking north (−z). */
   yaw = 0;
   pitch = 0.32;
+  private liftedPitch = 0.32;
   distance = 7.5;
   zoomTarget = 7.5;
   readonly minZoom = 2.6;
@@ -95,21 +96,32 @@ export class CameraRig {
     this.shakeT += dt;
     this.shake = Math.max(0, this.shake - dt * 2.5);
     const f = this.focus;
-    const cp = Math.cos(this.pitch);
-    const dir = new THREE.Vector3(Math.sin(this.yaw) * cp, Math.sin(this.pitch), Math.cos(this.yaw) * cp);
-    // Pull in when the terrain would block the view.
-    let d = this.distance;
-    if (this.ground) {
+    // When terrain blocks the view, first try lifting the camera over it, then pull in.
+    const blockAt = (pitch: number): number => {
+      if (!this.ground) return -1;
+      const c = Math.cos(pitch);
+      const dx = Math.sin(this.yaw) * c;
+      const dy = Math.sin(pitch);
+      const dz = Math.cos(this.yaw) * c;
       for (let s = 0.6; s <= this.distance; s += 0.5) {
-        const px = f.x + dir.x * s;
-        const pz = f.z + dir.z * s;
-        const py = f.y + dir.y * s;
-        if (py < this.ground(px, pz) + 0.4) {
-          d = Math.max(0.6, s - 0.5);
-          break;
-        }
+        if (f.y + dy * s < this.ground(f.x + dx * s, f.z + dz * s) + 0.4) return s;
+      }
+      return -1;
+    };
+    let pitch = this.pitch;
+    let d = this.distance;
+    let hit = blockAt(pitch);
+    for (let k = 1; hit >= 0 && k <= 5; k++) {
+      const p2 = Math.min(1.25, this.pitch + k * 0.12);
+      if (blockAt(p2) < 0) {
+        pitch = p2;
+        hit = -1;
       }
     }
+    if (hit >= 0) d = Math.max(0.6, hit - 0.5);
+    this.liftedPitch = dt > 0 ? damp(this.liftedPitch, pitch, pitch > this.liftedPitch ? 10 : 3, dt) : pitch;
+    const cp = Math.cos(this.liftedPitch);
+    const dir = new THREE.Vector3(Math.sin(this.yaw) * cp, Math.sin(this.liftedPitch), Math.cos(this.yaw) * cp);
     this.smoothedDist = dt > 0 && d > this.smoothedDist ? damp(this.smoothedDist, d, 4, dt) : d;
     const s = this.shake * this.shake * 0.25;
     const ox = s * Math.sin(this.shakeT * 53);

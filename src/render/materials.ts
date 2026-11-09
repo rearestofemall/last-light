@@ -7,14 +7,33 @@ export const sharedUniforms = {
   /** Seasonal foliage tint (autumn orange, winter frost). */
   uFoliage: { value: new THREE.Color(1, 1, 1) },
   uFoliageAmt: { value: 0 },
+  /** Point the camera looks at (the player's chest); foliage between it and the camera dithers away. */
+  uFocus: { value: new THREE.Vector3(0, -9999, 0) },
 };
 
 /**
  * Patches a built-in material so vertices sway with the wind, proportional to height².
  * Instance position is used as phase so neighbouring plants move out of sync.
  */
-export function addWindSway<T extends THREE.Material>(material: T, strength: number, key: string, foliage = true): T {
+export function addWindSway<T extends THREE.Material>(material: T, strength: number, key: string, foliage = true, occlude = false): T {
   material.onBeforeCompile = (shader) => {
+    if (occlude) {
+      shader.uniforms.uFocus = sharedUniforms.uFocus;
+      shader.fragmentShader = 'uniform vec3 uFocus;\nvarying vec3 vFadeW;\n' + shader.fragmentShader.replace(
+        'void main() {',
+        `void main() {
+        {
+          // Dither out foliage that sits between the camera and the player.
+          vec3 sd = uFocus - cameraPosition;
+          float t = clamp(dot(vFadeW - cameraPosition, sd) / max(dot(sd, sd), 0.001), 0.0, 1.0);
+          float dl = length(vFadeW - (cameraPosition + sd * t));
+          float amt = (1.0 - smoothstep(1.1, 2.6, dl)) * (1.0 - smoothstep(0.82, 0.97, t));
+          amt = max(amt, 1.0 - smoothstep(1.6, 3.4, length(vFadeW - cameraPosition)));
+          float dither = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+          if (amt * 1.1 - 0.05 > dither) discard;
+        }`,
+      );
+    }
     shader.uniforms.uTime = sharedUniforms.uTime;
     shader.uniforms.uWind = sharedUniforms.uWind;
     shader.uniforms.uFoliage = sharedUniforms.uFoliage;
@@ -47,8 +66,21 @@ export function addWindSway<T extends THREE.Material>(material: T, strength: num
         transformed.x += sway;
         transformed.z += sway * 0.35;`,
       );
+    if (occlude) {
+      shader.vertexShader = 'varying vec3 vFadeW;\n' + shader.vertexShader.replace(
+        '#include <project_vertex>',
+        `#include <project_vertex>
+        {
+          vec4 fw = vec4(transformed, 1.0);
+          #ifdef USE_INSTANCING
+            fw = instanceMatrix * fw;
+          #endif
+          vFadeW = (modelMatrix * fw).xyz;
+        }`,
+      );
+    }
   };
-  material.customProgramCacheKey = () => `wind-${key}`;
+  material.customProgramCacheKey = () => `wind-${key}-${occlude}`;
   return material;
 }
 

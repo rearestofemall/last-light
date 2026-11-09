@@ -43,6 +43,8 @@ const FOLIAGE = [
  * One playthrough: owns every gameplay system and runs them in a fixed order each tick.
  * Game (the shell) owns menus, the loop and persistence.
  */
+const SIGHT: [number, number][] = [[0, 0], [30, 0], [-30, 0], [0, 30], [0, -30], [21, 21], [-21, 21], [21, -21], [-21, -21]];
+
 export class Session implements BackpackHost {
   readonly inventory = new Inventory(24);
   readonly containers = new ContainerRegistry();
@@ -385,6 +387,7 @@ export class Session implements BackpackHost {
     this.player.placeAt(SPAWN_X, undefined, 1.5);
     this.player.heading = Math.PI / 2;
     this.rig.yaw = -Math.PI / 2 + 0.35;
+    this.rig.pitch = 0.34;
     this.respawn.y = this.player.body.y;
     this.locationId = null;
     this.regionId = null;
@@ -467,6 +470,7 @@ export class Session implements BackpackHost {
     this.player.placeAt(d.player.x, d.player.y, d.player.z);
     this.player.heading = d.player.heading;
     this.rig.yaw = d.player.heading + Math.PI;
+    this.rig.pitch = 0.34;
     this.world.applyGates();
     this.quests.update(false);
     this.hotbarDirty = true;
@@ -590,7 +594,8 @@ export class Session implements BackpackHost {
     });
 
     // Story
-    this.story.explore(b.x, b.z);
+    // Reveal what the player can see: their cell and a ring around it.
+    for (const [ox, oz] of SIGHT) this.story.explore(b.x + ox, b.z + oz);
     this.trackLocation();
     this.poiTimer -= dt;
     if (this.poiTimer <= 0) {

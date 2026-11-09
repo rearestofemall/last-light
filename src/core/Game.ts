@@ -4,6 +4,7 @@ import { Session } from '../gameplay/Session';
 import { SaveManager } from '../persistence/SaveManager';
 import { CameraRig } from '../render/CameraRig';
 import { Environment } from '../render/Environment';
+import { sharedUniforms } from '../render/materials';
 import { Renderer } from '../render/Renderer';
 import type { GameApi, Projector, SaveSummary } from '../ui/types';
 import { LoadingScreen } from '../ui/LoadingScreen';
@@ -276,7 +277,8 @@ export class Game implements GameApi {
       s.player.cameraYaw = this.rig.yaw;
       const p = s.model.root.position;
       this.rig.follow(dt, p.x, p.y, p.z);
-    }
+      sharedUniforms.uFocus.value.set(p.x, p.y + 1.1, p.z);
+    } else sharedUniforms.uFocus.value.set(0, -9999, 0);
     const p = s.model.root.position;
     s.world.update(dt, this.rig.focus.x, this.rig.focus.z, p.x, p.y, p.z);
     if (this.state === 'menu') s.lights.update(dt, this.rig.focus.x, this.rig.focus.y, this.rig.focus.z, 0, 0.3);

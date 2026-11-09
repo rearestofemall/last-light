@@ -35,8 +35,8 @@ export function createChunkMaterials(standard: boolean): ChunkMaterials {
   return {
     terrain,
     skirt: new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }),
-    tree: addWindSway(vertexColorMaterial(standard), 0.0021, `tree-${standard}`),
-    shrub: addWindSway(vertexColorMaterial(standard), 0.05, `shrub-${standard}`),
+    tree: addWindSway(vertexColorMaterial(standard), 0.0021, `tree-${standard}`, true, true),
+    shrub: addWindSway(vertexColorMaterial(standard), 0.05, `shrub-${standard}`, true, true),
     grass: addWindSway(vertexColorMaterial(standard, { flat: false }), 0.3, `grass-${standard}`),
     solid: vertexColorMaterial(standard),
   };
