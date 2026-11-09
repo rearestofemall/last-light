@@ -19,6 +19,8 @@ export interface CabinSpec {
   ground?: number;
   /** Omit the doorway on one side (e.g. tower against a cliff). */
   noDoor?: 'left' | 'right';
+  /** Depth position of the building (0 = on the road). */
+  z?: number;
   /** Painted bands across the facade every other storey (lighthouse). */
   bands?: THREE.MeshStandardMaterial;
 }
@@ -82,11 +84,17 @@ function styleMats(mats: SiteMaterials, style: HouseStyle) {
  */
 export function buildCabin(ctx: SiteContext, spec: CabinSpec): CabinResult {
   const { mats, terrain } = ctx;
-  const g = spec.ground ?? terrain.heightAt(spec.x);
+  const oz = spec.z ?? 0;
+  const g = spec.ground ?? terrain.heightAt3(spec.x, oz);
   const group = new THREE.Group();
-  group.position.set(spec.x, g, 0);
+  group.position.set(spec.x, g, oz);
   ctx.group.add(group);
-  const st = styleMats(mats, spec.style ?? 'timber');
+  const base = styleMats(mats, spec.style ?? 'timber');
+  // Per-building clones so the whole shell can fade while the player is inside.
+  const wallFade = fadeMaterial(base.wall);
+  const trimFade = fadeMaterial(base.trim);
+  const roofBackFade = fadeMaterial(base.roof);
+  const st = { wall: wallFade, trim: trimFade, roof: roofBackFade };
 
   const W = spec.width;
   const H = spec.height;
@@ -104,7 +112,7 @@ export function buildCabin(ctx: SiteContext, spec: CabinSpec): CabinResult {
   for (const sx of [-1, 1]) for (const z of [zb + 0.4, zf - 0.4]) mesh(worldUvBox(0.7, 1.4, 0.7), mats.stone, sx * (W / 2 - 0.35), -0.5, z, group);
   mesh(worldUvBox(W, 0.3, D, 1.4), mats.woodDark, 0, fy - 0.15, zc, group);
   for (const sx of [-1, 1]) if (spec.noDoor !== (sx < 0 ? 'left' : 'right')) mesh(worldUvBox(0.7, 0.2, 2.2), mats.woodDark, sx * (W / 2 + 0.35), 0.1, 0, group);
-  solid(ctx, spec.x - W / 2, spec.x + W / 2, g - 3, g + fy, 'wood');
+  solid(ctx, spec.x - W / 2, spec.x + W / 2, g - 3, g + fy, 'wood', undefined, zb + oz, zf + oz);
 
   // Back wall
   mesh(worldUvBox(W, TH, 0.25), st.wall, 0, fy + TH / 2, zb + 0.125, group);
@@ -133,7 +141,7 @@ export function buildCabin(ctx: SiteContext, spec: CabinSpec): CabinResult {
     const blocked = spec.noDoor === (sx < 0 ? 'left' : 'right');
     if (blocked) {
       mesh(worldUvBox(0.25, TH, D), st.wall, x, fy + TH / 2, zc, group);
-      solid(ctx, spec.x + x - 0.15, spec.x + x + 0.15, g + fy, g + fy + TH, 'wood');
+      solid(ctx, spec.x + x - 0.15, spec.x + x + 0.15, g + fy, g + fy + TH, 'wood', undefined, zb + oz, zf + oz);
       continue;
     }
     mesh(worldUvBox(0.25, H, backLen), st.wall, x, fy + H / 2, zb + backLen / 2, group);
@@ -148,7 +156,10 @@ export function buildCabin(ctx: SiteContext, spec: CabinSpec): CabinResult {
     door.rotation.y = sx * (Math.PI - 0.12);
     group.add(door);
     mesh(worldUvBox(0.08, DOOR_H - 0.05, DOOR_HALF * 2 - 0.1), st.trim, 0, (DOOR_H - 0.05) / 2, DOOR_HALF - 0.05, door);
-    solid(ctx, spec.x + x - 0.15, spec.x + x + 0.15, g + fy + DOOR_H, g + fy + TH, 'wood');
+    // Wall segments either side of the doorway, and the lintel above it.
+    solid(ctx, spec.x + x - 0.15, spec.x + x + 0.15, g + fy + DOOR_H, g + fy + TH, 'wood', undefined, -DOOR_HALF + oz, DOOR_HALF + oz);
+    solid(ctx, spec.x + x - 0.15, spec.x + x + 0.15, g + fy, g + fy + TH, 'wood', undefined, zb + oz, -DOOR_HALF + oz);
+    solid(ctx, spec.x + x - 0.15, spec.x + x + 0.15, g + fy, g + fy + TH, 'wood', undefined, DOOR_HALF + oz, zf + oz);
   }
 
   // Front wall with window openings — fades when inside.
@@ -187,7 +198,7 @@ export function buildCabin(ctx: SiteContext, spec: CabinSpec): CabinResult {
   for (let i = 1; i < nf; i++) {
     const y = fy + i * H;
     mesh(worldUvBox(W - 0.3, 0.22, D - 0.3, 1.4), mats.woodDark, 0, y - 0.11, zc, group);
-    oneway(ctx, spec.x - W / 2 + 0.15, spec.x + W / 2 - 0.15, g + y, 'wood');
+    oneway(ctx, spec.x - W / 2 + 0.15, spec.x + W / 2 - 0.15, g + y, 'wood', undefined, zb + oz, zf + oz);
     const left = i % 2 === 1;
     const sx0 = left ? -W / 2 + 0.4 : W / 2 - 2.8;
     const steps = Math.max(2, Math.round(H / 0.9));
@@ -197,7 +208,7 @@ export function buildCabin(ctx: SiteContext, spec: CabinSpec): CabinResult {
       const tx = sx0 + (left ? s * 0.55 : 2.4 - s * 0.55);
       mesh(worldUvBox(1.1, 0.16, 1.4, 0.8), mats.woodDark, tx, sy - 0.08, zb + 1.2, group);
       mesh(new THREE.BoxGeometry(0.08, (s * H) / steps, 0.08), mats.woodDark, tx, y - H + (s * H) / steps / 2, zb + 1.9, group);
-      oneway(ctx, spec.x + sx0, spec.x + sx0 + 2.4, g + sy, 'wood');
+      oneway(ctx, spec.x + sx0, spec.x + sx0 + 2.4, g + sy, 'wood', undefined, zb + 0.3 + oz, zb + 2.3 + oz);
     }
   }
 
@@ -232,7 +243,10 @@ export function buildCabin(ctx: SiteContext, spec: CabinSpec): CabinResult {
   for (let i = 0; i < nf; i++) {
     for (let bx = -W / 2 + 1.5; bx < W / 2; bx += 2.5) mesh(new THREE.BoxGeometry(0.2, 0.25, D), mats.woodDark, bx, fy + (i + 1) * H - 0.12, zc, group);
   }
-  solid(ctx, spec.x - W / 2 - 0.3, spec.x + W / 2 + 0.3, g + roofTop, g + roofTop + 0.5, 'wood', 'roof');
+  solid(ctx, spec.x - W / 2 - 0.3, spec.x + W / 2 + 0.3, g + roofTop, g + roofTop + 0.5, 'wood', 'roof', zb - 0.7 + oz, zf + 0.7 + oz);
+  // Back and front walls.
+  solid(ctx, spec.x - W / 2, spec.x + W / 2, g + fy, g + roofTop, 'wood', undefined, zb + oz, zb + 0.25 + oz);
+  solid(ctx, spec.x - W / 2, spec.x + W / 2, g + fy, g + roofTop, 'wood', undefined, zf - 0.2 + oz, zf + oz);
 
   // Optional loft (one-way platform reached by jumping from furniture)
   if (spec.loft) {
@@ -248,7 +262,7 @@ export function buildCabin(ctx: SiteContext, spec: CabinSpec): CabinResult {
     group.add(ladder);
     for (const lz of [-0.25, 0.25]) mesh(new THREE.BoxGeometry(0.07, L.height + 0.6, 0.07), mats.woodDark, 0, (L.height + 0.6) / 2, lz, ladder);
     for (let r = 0.35; r < L.height + 0.4; r += 0.38) mesh(new THREE.BoxGeometry(0.06, 0.05, 0.56), mats.woodDark, 0, r, 0, ladder);
-    oneway(ctx, spec.x + L.x0, spec.x + L.x1, g + fy + L.height, 'wood');
+    oneway(ctx, spec.x + L.x0, spec.x + L.x1, g + fy + L.height, 'wood', undefined, zb + oz, zf + oz);
   }
 
   const fade: Fadeable = {
@@ -256,7 +270,9 @@ export function buildCabin(ctx: SiteContext, spec: CabinSpec): CabinResult {
     x1: spec.x + W / 2 + 0.4,
     y0: g - 0.5,
     y1: g + fy + TH + 1,
-    materials: [frontMat, postMat, roofMat, ...fadeExtra],
+    z0: zb - 0.3 + oz,
+    z1: zf + 0.3 + oz,
+    materials: [frontMat, postMat, roofMat, wallFade, trimFade, roofBackFade, ...fadeExtra],
     meshes: [],
     opacity: 1,
   };
@@ -265,7 +281,7 @@ export function buildCabin(ctx: SiteContext, spec: CabinSpec): CabinResult {
     if (m.isMesh && fade.materials.includes(m.material as THREE.Material)) fade.meshes.push(m);
   });
   ctx.fadeables.push(fade);
-  ctx.interiors.push({ x0: spec.x - W / 2, x1: spec.x + W / 2, y0: g, y1: g + fy + TH });
+  ctx.interiors.push({ x0: spec.x - W / 2, x1: spec.x + W / 2, y0: g, y1: g + fy + TH, z0: zb + oz, z1: zf + oz });
 
   return { group, floorY: g + fy, x: spec.x, storeys };
 }

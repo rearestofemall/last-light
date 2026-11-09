@@ -124,10 +124,14 @@ export class Sky {
     u.uCloudCover.value = a.cloudCover;
   }
 
+  setHorizon(v: number): void {
+    this.material.uniforms.uHorizonY.value = v;
+  }
+
   update(time: number, camX: number, aspect: number): void {
     const u = this.material.uniforms;
     u.uTime.value = time;
-    u.uScroll.value = camX * 0.0035;
+    u.uScroll.value = camX;
     u.uAspect.value = aspect;
   }
 }

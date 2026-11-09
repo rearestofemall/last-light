@@ -2,10 +2,11 @@ import type { GameEventBus } from '../core/events';
 import { h, ICONS, menuButton, show } from './dom';
 
 const CONTROLS: [string, string[]][] = [
-  ['Move', ['A', 'D']],
+  ['Move', ['W', 'A', 'S', 'D']],
+  ['Look around', ['Mouse']],
   ['Sprint', ['Shift']],
   ['Jump / swim up', ['Space']],
-  ['Drop through platform', ['S', '+', 'Space']],
+  ['Drop through a floor', ['Z', '+', 'Space']],
   ['Interact · gather · read', ['E']],
   ['Secondary action (fill, put out)', ['R']],
   ['Use held item · attack · eat', ['F', '/', 'Click']],
@@ -13,7 +14,7 @@ const CONTROLS: [string, string[]][] = [
   ['Backpack', ['Tab']],
   ['Crafting', ['C']],
   ['Build mode', ['B']],
-  ['Demolish (in build mode)', ['X']],
+  ['Demolish · rotate (in build mode)', ['X', '/', 'R']],
   ['Map', ['M']],
   ['Journal', ['J']],
   ['Zoom camera', ['Mouse wheel']],
@@ -38,7 +39,7 @@ export class ControlsPanel {
         'div',
         { class: 'panel controls__panel' },
         h('header', { class: 'panel__head' }, h('h2', {}, 'Controls'), h('button', { class: 'icon-btn', 'aria-label': 'Close', html: ICONS.close, onclick: () => this.close() })),
-        h('div', { class: 'controls__body' }, ...rows, h('p', { class: 'controls__note' }, 'Arrow keys also work for movement and jumping.')),
+        h('div', { class: 'controls__body' }, ...rows, h('p', { class: 'controls__note' }, 'Click the game to capture the mouse; Esc releases it. Right-drag also turns the camera.')),
         h('footer', { class: 'panel__foot' }, menuButton(events, 'Back', () => this.close(), { variant: 'is-compact' })),
       ),
     );

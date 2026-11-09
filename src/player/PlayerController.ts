@@ -1,4 +1,4 @@
-import { approach, clamp } from '../core/math';
+import { clamp } from '../core/math';
 import type { Input } from '../core/Input';
 import type { GameEventBus } from '../core/events';
 import type { CollisionWorld } from '../physics/CollisionWorld';
@@ -46,7 +46,11 @@ export class PlayerController {
   readonly body: Body;
   prevX: number;
   prevY: number;
-  facing: 1 | -1 = 1;
+  prevZ: number;
+  /** Direction the character faces (radians, 0 = +z). */
+  heading = Math.PI;
+  /** Camera yaw used to turn input into world directions. */
+  cameraYaw = 0;
   state: MoveState = 'idle';
   /** True while the sprint input is producing sprint speed (for stamina drain in M2). */
   sprinting = false;
@@ -68,26 +72,38 @@ export class PlayerController {
     private events: GameEventBus,
     x: number,
     y: number,
+    z = 0,
   ) {
-    this.body = createBody(x, y);
+    this.body = createBody(x, y, z);
     this.prevX = x;
     this.prevY = y;
+    this.prevZ = z;
   }
 
   /** Teleport, e.g. when loading a save. Snaps to the ground if y is not given. */
-  placeAt(x: number, y?: number): void {
+  placeAt(x: number, y?: number, z = 0): void {
     const b = this.body;
     b.x = x;
-    b.y = this.world.resolveSpawnY(x, y ?? this.world.groundAt(x, b.halfWidth), b.halfWidth, b.height) + 0.02;
-    b.vx = b.vy = 0;
+    b.z = z;
+    b.y = this.world.resolveSpawnY(x, z, y ?? this.world.groundAt(x, z, b.r), b.r, b.height) + 0.02;
+    b.vx = b.vy = b.vz = 0;
     b.grounded = false;
     this.prevX = b.x;
     this.prevY = b.y;
+    this.prevZ = b.z;
     this.age = 0;
   }
 
   get speed(): number {
-    return Math.abs(this.body.vx);
+    return Math.hypot(this.body.vx, this.body.vz);
+  }
+
+  /** Unit facing vector on the ground plane. */
+  get facingX(): number {
+    return Math.sin(this.heading);
+  }
+  get facingZ(): number {
+    return Math.cos(this.heading);
   }
 
   update(dt: number, input: Input): void {
@@ -95,10 +111,11 @@ export class PlayerController {
     const b = this.body;
     this.prevX = b.x;
     this.prevY = b.y;
+    this.prevZ = b.z;
     this.age += dt;
 
     // --- Water state ---
-    const water = this.world.isUnderground(b.x, b.y) ? null : this.world.terrain.waterAt(b.x);
+    const water = this.world.isUnderground(b.x, b.z, b.y) ? null : this.world.terrain.waterAt(b.x, b.z);
     const wasSub = this.submersion;
     this.waterSurfaceY = water ? water.surfaceY : null;
     this.submersion = water ? Math.max(0, water.surfaceY - b.y) : 0;
@@ -107,17 +124,40 @@ export class PlayerController {
       this.events.emit('player:splash', { intensity: clamp(-b.vy / 14, 0.2, 1) });
     }
 
-    // --- Horizontal intent ---
-    const dir = (input.held('right') ? 1 : 0) - (input.held('left') ? 1 : 0);
-    if (dir !== 0) this.facing = dir > 0 ? 1 : -1;
-    this.sprinting = dir !== 0 && input.held('sprint') && this.modifiers.canSprint && !swimming && b.grounded;
+    // --- Horizontal intent, relative to the camera ---
+    const fwd = (input.held('up') ? 1 : 0) - (input.held('down') ? 1 : 0);
+    const side = (input.held('right') ? 1 : 0) - (input.held('left') ? 1 : 0);
+    const cy = this.cameraYaw;
+    let ix = -Math.sin(cy) * fwd + Math.cos(cy) * side;
+    let iz = -Math.cos(cy) * fwd - Math.sin(cy) * side;
+    const il = Math.hypot(ix, iz);
+    if (il > 0) {
+      ix /= il;
+      iz /= il;
+    }
+    const moving = il > 0;
+    this.sprinting = moving && input.held('sprint') && this.modifiers.canSprint && !swimming && b.grounded;
     let maxSpeed = this.sprinting ? t.runSpeed : t.walkSpeed;
     if (swimming) maxSpeed = t.swimSpeed;
     else if (this.submersion > 0.35) maxSpeed *= t.wadeMul;
     maxSpeed *= this.modifiers.speedMul;
 
-    const accel = b.grounded || swimming ? (dir !== 0 ? t.groundAccel : t.groundDecel) : t.airAccel;
-    b.vx = approach(b.vx, dir * maxSpeed, accel * dt);
+    const accel = b.grounded || swimming ? (moving ? t.groundAccel : t.groundDecel) : t.airAccel;
+    // Approach the target velocity as a vector so diagonal movement isn't faster.
+    const tx = ix * maxSpeed;
+    const tz = iz * maxSpeed;
+    const dvx = tx - b.vx;
+    const dvz = tz - b.vz;
+    const dl = Math.hypot(dvx, dvz);
+    const stepV = accel * dt;
+    if (dl <= stepV) {
+      b.vx = tx;
+      b.vz = tz;
+    } else {
+      b.vx += (dvx / dl) * stepV;
+      b.vz += (dvz / dl) * stepV;
+    }
+    if (moving) this.heading = Math.atan2(ix, iz);
 
     // --- Jump input ---
     if (input.consume('jump')) this.jumpBuffer = t.jumpBuffer;
@@ -130,7 +170,7 @@ export class PlayerController {
 
     if (this.jumpBuffer > 0 && this.modifiers.canJump) {
       const onOneWay = b.grounded && b.groundCollider?.kind === 'oneway';
-      if (onOneWay && input.held('down')) {
+      if (onOneWay && input.held('drop')) {
         // Drop through the platform instead of jumping.
         this.dropTimer = t.dropThroughTime;
         b.grounded = false;
@@ -180,7 +220,7 @@ export class PlayerController {
     }
 
     // --- State + footsteps ---
-    const speed = Math.abs(b.vx);
+    const speed = Math.hypot(b.vx, b.vz);
     if (swimming && !b.grounded) this.state = 'swim';
     else if (!b.grounded) this.state = b.vy > 0 ? 'jump' : 'fall';
     else if (this.submersion > 0.35) this.state = 'wade';

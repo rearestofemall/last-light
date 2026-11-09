@@ -1,23 +1,31 @@
 import type { GameEventBus } from '../core/events';
-import { MAP_BIN, type StoryState } from '../story/StoryState';
-import type { Terrain } from '../world/Terrain';
+import { exploredKey, MAP_BIN, type StoryState } from '../story/StoryState';
+import type { Poi } from '../world/sites/poi';
+import { type Terrain, VALLEY_HALF } from '../world/Terrain';
 import { LOCATIONS, PLAYABLE, REGIONS, RIVERS, SEA_Y } from '../world/WorldDef';
 import { h, ICONS, show } from './dom';
 
-const REGION_INK: Record<string, string> = { frost: '#c9d6e2', woods: '#7fa05c', city: '#a19b8e', coast: '#c9b98b' };
+const PX = 6; // metres per relief pixel
 
-/** Explored-strip map: terrain profile, regions, landmarks, objective and player marker. */
+export interface MapPlayer {
+  x: number;
+  z: number;
+  heading: number;
+}
+
+/** Top-down map: hill-shaded relief under a fog of war that clears as you explore. */
 export class MapScreen {
   readonly el: HTMLElement;
   private canvas = h('canvas', { class: 'map__canvas' }) as HTMLCanvasElement;
   private legend = h('div', { class: 'map__legend' });
-  private profile: Float32Array | null = null;
+  private relief: HTMLCanvasElement | null = null;
   onClose: () => void = () => {};
 
   constructor(
     root: HTMLElement,
     private events: GameEventBus,
     private terrain: () => Terrain,
+    private pois: () => Poi[],
   ) {
     this.el = h(
       'div',
@@ -37,10 +45,10 @@ export class MapScreen {
     return this.el.classList.contains('is-visible');
   }
 
-  open(story: StoryState, playerX: number, objective: { text: string; x: number } | null): void {
+  open(story: StoryState, player: MapPlayer, objective: { text: string; x: number } | null): void {
     show(this.el, true);
     this.events.emit('ui:sound', { kind: 'page' });
-    requestAnimationFrame(() => this.draw(story, playerX, objective));
+    requestAnimationFrame(() => this.draw(story, player, objective));
   }
 
   close(): void {
@@ -50,7 +58,46 @@ export class MapScreen {
     this.onClose();
   }
 
-  private draw(story: StoryState, px: number, objective: { text: string; x: number } | null): void {
+  /** Pre-render the whole land once: colour by region and height, shaded from the north-west. */
+  private buildRelief(): HTMLCanvasElement {
+    const t = this.terrain();
+    const W = Math.ceil((PLAYABLE.max - PLAYABLE.min) / PX);
+    const H = Math.ceil((VALLEY_HALF * 2) / PX);
+    const c = document.createElement('canvas');
+    c.width = W;
+    c.height = H;
+    const g = c.getContext('2d')!;
+    const img = g.createImageData(W, H);
+    const hex = (n: number) => [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+    for (let py = 0; py < H; py++) {
+      const z = -VALLEY_HALF + py * PX;
+      for (let px = 0; px < W; px++) {
+        const x = PLAYABLE.min + px * PX;
+        const hgt = t.heightAt3(x, z);
+        const reg = REGIONS.find((r) => x >= r.x0 && x < r.x1) ?? REGIONS[1];
+        let [r, gg, b] = hex(reg.palette.grass);
+        if (reg.id === 'frost') [r, gg, b] = [222, 228, 234];
+        const shade = (t.heightAt3(x - 3, z - 3) - hgt) * 0.12;
+        const k = Math.max(0.55, Math.min(1.35, 1 + shade + (hgt - 4) * 0.008));
+        r *= k;
+        gg *= k;
+        b *= k;
+        const water = RIVERS.some((rv) => t.riverFactor(rv, x, z) > 0.55) || hgt < SEA_Y;
+        if (water) [r, gg, b] = RIVERS.some((rv) => rv.frozen && t.riverFactor(rv, x, z) > 0.55) ? [205, 222, 232] : [92, 132, 150];
+        if (Math.abs(z) < 2.5 && !water) [r, gg, b] = [150, 120, 84];
+        const i = (py * W + px) * 4;
+        img.data[i] = r;
+        img.data[i + 1] = gg;
+        img.data[i + 2] = b;
+        img.data[i + 3] = 255;
+      }
+    }
+    g.putImageData(img, 0, 0);
+    return c;
+  }
+
+  private draw(story: StoryState, pl: MapPlayer, objective: { text: string; x: number } | null): void {
+    if (!this.relief) this.relief = this.buildRelief();
     const c = this.canvas;
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     const W = c.clientWidth;
@@ -59,113 +106,85 @@ export class MapScreen {
     c.height = H * dpr;
     const g = c.getContext('2d')!;
     g.scale(dpr, dpr);
-    const x0 = PLAYABLE.min;
-    const x1 = PLAYABLE.max;
-    const sx = (x: number) => ((x - x0) / (x1 - x0)) * (W - 40) + 20;
-    const t = this.terrain();
-    if (!this.profile) {
-      this.profile = new Float32Array(Math.ceil((x1 - x0) / 4));
-      for (let i = 0; i < this.profile.length; i++) this.profile[i] = t.heightAt(x0 + i * 4);
-    }
-    const base = H * 0.62;
-    const sy = (y: number) => base - y * 5;
-    g.clearRect(0, 0, W, H);
-    // Paper
-    g.fillStyle = '#e4d9bf';
+    const worldW = PLAYABLE.max - PLAYABLE.min;
+    const worldH = VALLEY_HALF * 2;
+    const scale = Math.min((W - 24) / worldW, (H - 24) / worldH);
+    const ox = (W - worldW * scale) / 2;
+    const oy = (H - worldH * scale) / 2;
+    const sx = (x: number) => ox + (x - PLAYABLE.min) * scale;
+    const sy = (z: number) => oy + (z + VALLEY_HALF) * scale;
+    g.fillStyle = '#d9cdb1';
     g.fillRect(0, 0, W, H);
-    // Region bands
-    for (const r of REGIONS) {
-      g.fillStyle = REGION_INK[r.id] + '33';
-      g.fillRect(sx(Math.max(r.x0, x0)), 0, sx(Math.min(r.x1, x1)) - sx(Math.max(r.x0, x0)), H);
-      g.fillStyle = '#4a3f30';
-      g.font = `600 11px Inter, system-ui, sans-serif`;
-      g.textAlign = 'center';
-      g.fillText(r.name.replace('The ', '').toUpperCase(), (sx(Math.max(r.x0, x0)) + sx(Math.min(r.x1, x1))) / 2, 22);
-    }
-    // Sea
-    g.fillStyle = '#7fa0ad88';
-    g.fillRect(sx(1100), sy(SEA_Y), sx(x1) - sx(1100), H - sy(SEA_Y));
-    // Terrain profile, revealed only where explored
-    const prof = this.profile;
-    g.lineWidth = 2;
-    for (let i = 0; i < prof.length - 1; i++) {
-      const x = x0 + i * 4;
-      const seen = story.explored.has(Math.floor(x / MAP_BIN));
-      const reg = REGIONS.find((r) => x >= r.x0 && x < r.x1) ?? REGIONS[1];
-      g.strokeStyle = seen ? '#3d3427' : '#3d342722';
-      g.beginPath();
-      g.moveTo(sx(x), sy(prof[i]));
-      g.lineTo(sx(x + 4), sy(prof[i + 1]));
-      g.stroke();
-      if (seen) {
-        g.fillStyle = REGION_INK[reg.id] + 'aa';
-        g.fillRect(sx(x), sy(prof[i]), sx(x + 4) - sx(x) + 0.5, H - sy(prof[i]));
+    g.imageSmoothingEnabled = true;
+    g.drawImage(this.relief, ox, oy, worldW * scale, worldH * scale);
+    // Fog of war over unexplored cells.
+    g.fillStyle = 'rgba(217, 205, 177, 0.88)';
+    const cell = MAP_BIN * scale;
+    for (let x = PLAYABLE.min; x < PLAYABLE.max; x += MAP_BIN) {
+      for (let z = -VALLEY_HALF; z < VALLEY_HALF; z += MAP_BIN) {
+        if (!story.explored.has(exploredKey(x + 1, z + 1))) g.fillRect(sx(x) - 0.5, sy(z) - 0.5, cell + 1, cell + 1);
       }
     }
-    // Rivers
-    for (const r of RIVERS) {
-      if (!story.explored.has(Math.floor(r.x / MAP_BIN))) continue;
-      g.fillStyle = r.frozen ? '#d9e7f0' : '#5d8fa8';
-      g.fillRect(sx(r.x - r.width / 2), sy(t.riverWaterY(r)), sx(r.x + r.width / 2) - sx(r.x - r.width / 2), 6);
-    }
-    // Underground passages (known once discovered)
-    g.setLineDash([4, 4]);
-    g.strokeStyle = '#3d342799';
-    for (const [a, b, id] of [
-      [752, 893, 'metro'],
-      [1500, 1548, 'sea-caves'],
-      [-852, -774, 'halcyon-station'],
-    ] as const) {
-      if (!story.locations.has(id)) continue;
-      g.beginPath();
-      g.moveTo(sx(a), H - 40);
-      g.lineTo(sx(b), H - 40);
-      g.stroke();
-    }
-    g.setLineDash([]);
-    // Landmarks
+    // Region names
+    g.fillStyle = '#3d3427';
+    g.font = `600 11px Inter, system-ui, sans-serif`;
     g.textAlign = 'center';
+    for (const r of REGIONS) g.fillText(r.name.replace('The ', '').toUpperCase(), (sx(Math.max(r.x0, PLAYABLE.min)) + sx(Math.min(r.x1, PLAYABLE.max))) / 2, oy + 14);
+    // Landmarks on the road
     for (const l of LOCATIONS) {
       if (!story.locations.has(l.id)) continue;
-      const lx = (l.x0 + l.x1) / 2;
-      const ly = sy(t.heightAt(lx));
+      const lx = sx((l.x0 + l.x1) / 2);
+      const ly = sy(0);
       g.fillStyle = '#2b241b';
       g.beginPath();
-      g.arc(sx(lx), ly - 8, l.landmark ? 3.5 : 2.5, 0, Math.PI * 2);
+      g.arc(lx, ly, l.landmark ? 3.5 : 2.5, 0, Math.PI * 2);
       g.fill();
       if (l.landmark) {
         g.save();
-        g.translate(sx(lx), ly - 16);
-        g.rotate(-Math.PI / 4);
+        g.translate(lx, ly - 7);
+        g.rotate(-Math.PI / 5);
         g.font = `500 11px 'Cormorant Garamond', Georgia, serif`;
         g.textAlign = 'left';
         g.fillText(l.name, 0, 0);
         g.restore();
       }
     }
-    // Objective
+    // Discovered points of interest
+    for (const p of this.pois()) {
+      if (!story.locations.has(p.id)) continue;
+      g.fillStyle = '#7a4b2a';
+      g.save();
+      g.translate(sx(p.x), sy(p.z));
+      g.rotate(Math.PI / 4);
+      g.fillRect(-3, -3, 6, 6);
+      g.restore();
+    }
     if (objective) {
-      const ox = sx(objective.x);
       g.strokeStyle = '#b5532f';
       g.lineWidth = 2;
       g.beginPath();
-      g.arc(ox, sy(t.heightAt(objective.x)) - 8, 9, 0, Math.PI * 2);
+      g.arc(sx(objective.x), sy(0), 8, 0, Math.PI * 2);
       g.stroke();
     }
-    // Player
-    const pX = sx(px);
-    const pY = sy(t.heightAt(px)) - 8;
+    // Player arrow
+    g.save();
+    g.translate(sx(pl.x), sy(pl.z));
+    g.rotate(Math.PI - pl.heading);
     g.fillStyle = '#e8a24a';
     g.strokeStyle = '#2b241b';
     g.lineWidth = 1.5;
     g.beginPath();
-    g.moveTo(pX, pY - 10);
-    g.lineTo(pX + 6, pY);
-    g.lineTo(pX - 6, pY);
+    g.moveTo(0, -9);
+    g.lineTo(6, 6);
+    g.lineTo(0, 3);
+    g.lineTo(-6, 6);
     g.closePath();
     g.fill();
     g.stroke();
-    const explored = Math.round((story.explored.size * MAP_BIN * 100) / (x1 - x0));
-    this.legend.innerHTML = `<span><i class="map__dot is-you"></i>You</span><span><i class="map__dot is-goal"></i>${objective ? objective.text : 'No current objective'}</span><span>${Math.min(100, explored)}% explored · ${story.locations.size} places found</span>`;
+    g.restore();
+    const total = Math.ceil(worldW / MAP_BIN) * Math.ceil(worldH / MAP_BIN);
+    const pct = Math.round((story.explored.size * 100) / total);
+    const found = this.pois().filter((p) => story.locations.has(p.id)).length;
+    this.legend.innerHTML = `<span><i class="map__dot is-you"></i>You</span><span><i class="map__dot is-goal"></i>${objective ? objective.text : 'No current objective'}</span><span>${pct}% explored · ${found}/${this.pois().length} wild places found</span>`;
   }
 }

@@ -13,7 +13,9 @@ import { type HarvestHost, ResourceSystem } from './Resources';
 import { createSiteMaterials, type Fadeable, type Gate, type Interior, type SiteContext, type SiteHost, type SiteStation } from './sites/kit';
 import { campsite, eastBlockade, huntersLodge, logBridge, rangerStation, ridgeLedges, trailhead, westBlockade } from './sites/places';
 import { city, coast, frost } from './sites/regions';
-import { Terrain, TERRAIN_Z_BACK } from './Terrain';
+import { Terrain, VALLEY_HALF } from './Terrain';
+import { generatePois, type Poi } from './sites/poi';
+import { bakeStatic } from './sites/bake';
 import { VegetationLibrary } from './vegetation';
 import { createRiverMesh, createWaterMaterial } from './Water';
 import { PLAYABLE, RIVERS, SEA_Y, WORLD_SEED } from './WorldDef';
@@ -40,6 +42,8 @@ export class World {
   readonly root = new THREE.Group();
   readonly resources: ResourceSystem;
   readonly stations: SiteStation[] = [];
+  /** Off-road points of interest. */
+  pois: Poi[] = [];
   private chunks: ChunkManager;
   private builder: ChunkBuilder;
   private chunkMaterials: ChunkMaterials;
@@ -55,7 +59,7 @@ export class World {
   ) {
     this.root.name = 'world';
     scene.add(this.root);
-    this.collision = new CollisionWorld(this.terrain, { min: PLAYABLE.min, max: PLAYABLE.max });
+    this.collision = new CollisionWorld(this.terrain, { minX: PLAYABLE.min, maxX: PLAYABLE.max, minZ: -VALLEY_HALF, maxZ: VALLEY_HALF });
 
     const lib = new VegetationLibrary(WORLD_SEED);
     this.standardMaterials = d.settings.profile.standardMaterials;
@@ -75,6 +79,8 @@ export class World {
 
     this.resources = new ResourceSystem(this.terrain, lib, this.chunkMaterials, d.interactions, d.harvest);
     this.root.add(this.resources.group);
+    this.chunks.onLoad = (i, j) => this.resources.loadChunk(i, j);
+    this.chunks.onUnload = (i, j) => this.resources.unloadChunk(i, j);
 
     const sites = new THREE.Group();
     sites.name = 'sites';
@@ -108,35 +114,26 @@ export class World {
     eastBlockade(ctx, 410, 436);
     city(ctx);
     coast(ctx);
+    this.pois = generatePois(ctx);
+    const baked = bakeStatic(sites);
+    // Fading walls now live in merged meshes: point the fade system at those.
+    for (const f of this.fadeables) f.meshes = [...new Set(f.meshes.map((m) => baked.replaced.get(m) ?? m))];
+    console.info(`[world] baked ${baked.before} site meshes into ${baked.after}`);
     // Sites are static: freeze their transforms.
     sites.updateMatrixWorld(true);
     sites.traverse((o) => (o.matrixAutoUpdate = false));
   }
 
-  /**
-   * The sea: a band of water behind the beach, ending in a vertical "horizon" apron that
-   * hides the drowned terrain beyond (an orthographic camera never converges to a horizon).
-   */
+  /** The sea north of the Drowned Coast, ending in a horizon apron under the mountains' haze. */
   private createSea(material: THREE.Material): THREE.Group {
     const g = new THREE.Group();
-    const depth = 46;
-    const geo = new THREE.PlaneGeometry(700, depth, 70, 6);
+    const geo = new THREE.PlaneGeometry(760, 470, 76, 47);
     geo.rotateX(-Math.PI / 2);
     const water = new THREE.Mesh(geo, material);
-    water.position.set(1390, SEA_Y, -12 - depth / 2);
+    water.position.set(1400, SEA_Y, -20 - 235);
     water.receiveShadow = true;
     water.renderOrder = 4;
     g.add(water);
-    const apronMat = new THREE.ShaderMaterial({
-      fog: true,
-      uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, { uTop: { value: new THREE.Color(0x3c6470) }, uBottom: { value: new THREE.Color(0x203a44) } }]),
-      vertexShader: `varying float vY;\n#include <fog_pars_vertex>\nvoid main(){ vY = uv.y; vec4 mvPosition = modelViewMatrix * vec4(position,1.0); gl_Position = projectionMatrix * mvPosition;\n#include <fog_vertex>\n}`,
-      fragmentShader: `uniform vec3 uTop; uniform vec3 uBottom; varying float vY;\n#include <fog_pars_fragment>\nvoid main(){ gl_FragColor = vec4(mix(uBottom, uTop, vY), 1.0);\n#include <tonemapping_fragment>\n#include <colorspace_fragment>\n#include <fog_fragment>\n}`,
-    });
-    const apron = new THREE.Mesh(new THREE.PlaneGeometry(700, 40), apronMat);
-    apron.position.set(1390, SEA_Y - 20, -12 - depth);
-    g.add(apron);
-    void TERRAIN_Z_BACK;
     return g;
   }
 
@@ -149,11 +146,12 @@ export class World {
       this.chunkMaterials = createChunkMaterials(this.standardMaterials);
     }
     this.builder.setProfile(p, this.chunkMaterials);
+    this.resources.setMaterials(this.chunkMaterials);
     this.chunks.clear();
   }
 
-  preload(focusX: number): void {
-    this.chunks.buildAll(focusX);
+  preload(focusX: number, focusZ: number): void {
+    this.chunks.buildAll(focusX, focusZ);
   }
 
   /** Apply any gates whose story flag has been set (call after loading, and each frame). */
@@ -166,17 +164,23 @@ export class World {
     }
   }
 
-  /** 2 when inside an authored building or underground, else 0. */
-  insideInterior(x: number, y: number): boolean {
-    return this.interiors.some((i) => x > i.x0 && x < i.x1 && y > i.y0 - 0.2 && y < i.y1);
+  /** True inside an authored building or underground level. */
+  insideInterior(x: number, y: number, z: number): boolean {
+    return this.interiors.some((i) => x > i.x0 && x < i.x1 && z > i.z0 && z < i.z1 && y > i.y0 - 0.2 && y < i.y1);
   }
 
-  update(dt: number, focusX: number, playerX: number, playerY: number): void {
-    this.chunks.update(focusX);
+  /** Nearest undiscovered-or-not point of interest within range. */
+  poiNear(x: number, z: number, range: number): Poi | null {
+    for (const p of this.pois) if (Math.hypot(p.x - x, p.z - z) < range) return p;
+    return null;
+  }
+
+  update(dt: number, focusX: number, focusZ: number, playerX: number, playerY: number, playerZ: number): void {
+    this.chunks.update(focusX, focusZ);
     this.applyGates();
     for (const n of this.npcs) n.update(dt);
     for (const f of this.fadeables) {
-      const inside = playerX > f.x0 && playerX < f.x1 && playerY > f.y0 && playerY < f.y1;
+      const inside = playerX > f.x0 && playerX < f.x1 && playerZ > f.z0 && playerZ < f.z1 && playerY > f.y0 && playerY < f.y1;
       const target = inside ? 0.12 : 1;
       if (Math.abs(f.opacity - target) < 0.001) continue;
       f.opacity = damp(f.opacity, target, 8, dt);

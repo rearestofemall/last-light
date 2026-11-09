@@ -1,6 +1,9 @@
 import { Noise } from '../core/noise';
 import { lerp, smoothstep } from '../core/math';
-import { FLATTEN, REGIONS, RIDGES, RIVERS, type RiverDef, regionAt, regionWeight } from './WorldDef';
+import { FLATTEN, REGIONS, RIDGES, RIVERS, type RiverDef, regionAt, regionWeight, SEA_Y } from './WorldDef';
+
+/** Pseudo-river describing the sea (for water queries). */
+const SEA_RIVER: RiverDef = { id: 'sea', x: 1400, width: 600, depth: 0, waterDepth: 0, bank: 0, salt: true };
 
 export type Surface = 'grass' | 'dirt' | 'rock' | 'wood' | 'water' | 'snow' | 'sand' | 'metal' | 'ice';
 
@@ -12,16 +15,24 @@ export interface WaterSample {
 }
 
 /** Depth (z) at which the terrain mesh ends; beyond it, parallax layers take over. */
-export const TERRAIN_Z_BACK = -112;
-export const TERRAIN_Z_FRONT = 38;
-/** Half-width of the band around the gameplay plane that stays level in depth. */
+/** Half-width of the valley (z extent of the walkable world). */
+export const VALLEY_HALF = 390;
+/** Terrain is generated over this z range (mountains beyond the walkable land). */
+export const TERRAIN_Z_MIN = -440;
+export const TERRAIN_Z_MAX = 440;
+/** The gorge between the woods and the city: a canyon across the whole map. */
+export const GORGE = { x0: 437, x1: 451 };
+/** The mountain ridge between the woods and the Frostlands; the only pass is at the road. */
+export const PASS_RIDGE = { x0: -246, x1: -222, notch: 7 };
+/** Half-width of the trail band that stays level (sites are built on it). */
 export const PLANE_BAND = 4;
 
 /**
- * The terrain heightfield.
- *  - `heightAt(x)` is the walkable profile along the gameplay plane (z = 0).
- *  - `heightAt3(x, z)` is the full 3D field used for the rendered landscape.
- * Both are pure functions of the seed, so chunks can be generated in any order.
+ * The terrain heightfield of a long valley running west → east.
+ *  - Along the trail (z ≈ 0) the profile equals `heightAt(x)`, which all sites are built on.
+ *  - Away from the trail: rolling hills, then mountain walls that close the valley.
+ *  - On the Drowned Coast the northern side falls away beneath the sea.
+ * Pure function of the seed, so chunks can be generated in any order.
  */
 export class Terrain {
   private n: Noise;
@@ -94,48 +105,54 @@ export class Terrain {
     return this.riverBedY(r) + r.waterDepth;
   }
 
-  /**
-   * Large-scale depth profile. Behind the plane the land falls away at roughly the camera's
-   * view slope, so distant hills sit near a natural horizon instead of covering the sky.
-   * In front, it gently descends towards the viewer.
-   */
-  profileOffset(z: number): number {
+  /** Mountain walls that close the valley; lower on the coast's sea side. */
+  private walls(x: number, z: number): number {
     const az = Math.abs(z);
-    const band = smoothstep(PLANE_BAND, PLANE_BAND + 10, az);
-    const dz = Math.max(0, az - PLANE_BAND);
-    return band * (z < 0 ? -0.125 * dz : -0.055 * dz);
+    const k = smoothstep(VALLEY_HALF - 40, VALLEY_HALF + 30, az);
+    if (k <= 0) return 0;
+    const frost = regionWeight('frost', x, 80);
+    const coastSea = z < 0 ? regionWeight('coast', x, 60) : 0;
+    const h = (26 + 20 * this.d.fbm2(x * 0.012, z * 0.012, 3) + frost * 22) * (1 - coastSea);
+    return k * h;
   }
 
   heightAt3(x: number, z: number): number {
     const az = Math.abs(z);
-    const ridge = this.ridge(x);
-    // Ridges run back into the hills and taper off towards the viewer.
-    const b = this.base(x) - (z > 0 ? ridge * smoothstep(3, 18, z) : 0);
-    const band = smoothstep(PLANE_BAND, PLANE_BAND + 10, az);
-    let h = b + this.profileOffset(z);
-    if (z < 0) {
-      const dz = Math.max(0, az - PLANE_BAND);
-      h += band * (2 + dz * 0.075) * this.d.fbm2(x * 0.022, z * 0.025, 3);
-      // The coast falls away beneath the sea behind the beach.
-      const coast = regionWeight('coast', x, 60);
-      if (coast > 0) h -= coast * smoothstep(-8, -30, z) * 10;
-    } else {
-      h += band * 0.8 * this.d.fbm2(x * 0.05, z * 0.05, 2);
-    }
+    // Authored cliff ridges are local landmarks near the road, not map-wide walls.
+    const b = this.base(x) - this.ridge(x) * smoothstep(28, 80, az);
+    const off = smoothstep(PLANE_BAND, PLANE_BAND + 18, az);
+    const rel = this.relief(x);
+    let h = b;
+    h += off * rel * (2.8 * this.d.fbm2(x * 0.018, z * 0.02, 3) + 1.1 * this.d.fbm2(x * 0.07 + 9, z * 0.07, 2));
     h += 0.22 * this.d.fbm2(x * 0.21, z * 0.21, 2) * smoothstep(1.4, 3.5, az);
+    h += this.walls(x, z);
+    // Hills and valleys over the open land, growing away from the road.
+    const far = smoothstep(20, 120, az);
+    h += far * rel * 9 * this.d.fbm2(x * 0.006 + 40, z * 0.006, 3);
+    // Border ridge to the Frostlands, notched where the road crosses.
+    const ridge = smoothstep(PASS_RIDGE.x0, PASS_RIDGE.x0 + 6, x) * (1 - smoothstep(PASS_RIDGE.x1 - 6, PASS_RIDGE.x1, x));
+    if (ridge > 0) h += ridge * 34 * smoothstep(PASS_RIDGE.notch, PASS_RIDGE.notch + 10, az);
+    // The gorge.
+    const g = smoothstep(GORGE.x0 - 1, GORGE.x0 + 2, x) * (1 - smoothstep(GORGE.x1 - 2, GORGE.x1 + 1, x));
+    if (g > 0) h -= g * 22;
+    // The coast's north shore drops beneath the sea.
+    if (z < 0) {
+      const coast = regionWeight('coast', x, 60);
+      if (coast > 0) h -= coast * smoothstep(-24, -70, z) * 14;
+    }
     for (const r of RIVERS) {
       const k = this.riverFactor(r, x, z);
       if (k > 0) {
-        const bed = this.riverBedY(r) + this.profileOffset(z) + 0.25 * this.d.noise2(x * 0.4, z * 0.4) * k;
+        const bed = this.riverBedY(r) + 0.25 * this.d.noise2(x * 0.4, z * 0.4) * k;
         h = lerp(h, bed, k);
       }
     }
     return h;
   }
 
-  /** Water surface height of a river at depth z (rivers follow the depth profile). */
-  riverWaterYAt(r: RiverDef, z: number): number {
-    return this.riverWaterY(r) + this.profileOffset(z);
+  /** Water surface height of a river (rivers are level across the valley). */
+  riverWaterYAt(r: RiverDef, _z: number): number {
+    return this.riverWaterY(r);
   }
 
   /** Ground height along the gameplay plane. */
@@ -143,17 +160,31 @@ export class Terrain {
     return this.heightAt3(x, 0);
   }
 
-  /** Signed slope (dy/dx) along the gameplay plane. */
-  slopeAt(x: number): number {
-    return (this.heightAt(x + 0.05) - this.heightAt(x - 0.05)) / 0.1;
+  /** Signed slope (dy/dx) along the trail. */
+  slopeAt(x: number, z = 0): number {
+    return (this.heightAt3(x + 0.05, z) - this.heightAt3(x - 0.05, z)) / 0.1;
   }
 
-  waterAt(x: number): WaterSample | null {
+  /** Steepness (gradient magnitude) at a point. */
+  gradientAt(x: number, z: number): number {
+    const e = 0.3;
+    const dx = (this.heightAt3(x + e, z) - this.heightAt3(x - e, z)) / (2 * e);
+    const dz = (this.heightAt3(x, z + e) - this.heightAt3(x, z - e)) / (2 * e);
+    return Math.hypot(dx, dz);
+  }
+
+  waterAt(x: number, z = 0): WaterSample | null {
     for (const r of RIVERS) {
-      if (r.frozen || Math.abs(x - r.x) > r.width / 2 + r.bank) continue;
+      if (r.frozen || Math.abs(x - r.x) > r.width / 2 + r.bank + 10) continue;
+      if (this.riverFactor(r, x, z) <= 0) continue;
       const surfaceY = this.riverWaterY(r);
-      const ground = this.heightAt(x);
+      const ground = this.heightAt3(x, z);
       if (surfaceY > ground) return { surfaceY, depth: surfaceY - ground, river: r };
+    }
+    // The sea along the coast.
+    if (z < -10 && regionWeight('coast', x, 60) > 0.2) {
+      const ground = this.heightAt3(x, z);
+      if (SEA_Y > ground) return { surfaceY: SEA_Y, depth: SEA_Y - ground, river: SEA_RIVER };
     }
     return null;
   }
@@ -177,14 +208,15 @@ export class Terrain {
     return RIDGES.some((r) => x > r.x0 + r.cliff * 0.5 && x < r.x1 + r.fade * 0.4);
   }
 
-  surfaceAt(x: number): Surface {
-    if (this.waterAt(x)) return 'water';
-    for (const r of RIVERS) if (this.riverFactor(r, x, 0) > 0.25) return r.frozen ? 'ice' : 'sand';
+  surfaceAt(x: number, z = 0): Surface {
+    if (this.waterAt(x, z)) return 'water';
+    for (const r of RIVERS) if (this.riverFactor(r, x, z) > 0.25) return r.frozen ? 'ice' : 'sand';
     const reg = regionAt(x).id;
     if (reg === 'frost') return 'snow';
-    if (reg === 'city') return 'rock';
-    if (reg === 'coast') return this.pathAmount(x) > 0.3 ? 'sand' : 'grass';
-    if (this.onRidge(x)) return 'rock';
-    return this.pathAmount(x) > 0.5 ? 'dirt' : 'grass';
+    const az = Math.abs(z);
+    if (reg === 'city') return az < 5 ? 'rock' : 'grass';
+    if (reg === 'coast') return az < 2 && this.pathAmount(x) > 0.3 ? 'sand' : this.heightAt3(x, z) < SEA_Y + 2 ? 'sand' : 'grass';
+    if (this.onRidge(x) && az < 7) return 'rock';
+    return az < 1.6 && this.pathAmount(x) > 0.5 ? 'dirt' : 'grass';
   }
 }

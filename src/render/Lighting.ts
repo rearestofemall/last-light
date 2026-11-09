@@ -14,10 +14,10 @@ export class Lighting {
     this.sun = new THREE.DirectionalLight(0xffffff, 2.5);
     this.sun.castShadow = true;
     const cam = this.sun.shadow.camera;
-    cam.left = -44;
-    cam.right = 44;
-    cam.top = 34;
-    cam.bottom = -34;
+    cam.left = -40;
+    cam.right = 40;
+    cam.top = 40;
+    cam.bottom = -40;
     cam.near = 1;
     cam.far = 320;
     this.sun.shadow.bias = -0.0004;
@@ -51,9 +51,10 @@ export class Lighting {
     const texel = (this.sun.shadow.camera.right - this.sun.shadow.camera.left) / this.shadowSize;
     const fx = Math.round(focus.x / texel) * texel;
     const fy = Math.round(focus.y / texel) * texel;
-    this.sun.target.position.set(fx, fy, -8);
-    this.sun.position.set(fx + this.sunDir.x * 150, fy + this.sunDir.y * 150, -8 + this.sunDir.z * 150);
-    this.fill.target.position.set(fx, fy, 0);
-    this.fill.position.set(fx - 60, fy + 40, 100);
+    const fz = Math.round(focus.z / texel) * texel;
+    this.sun.target.position.set(fx, fy, fz);
+    this.sun.position.set(fx + this.sunDir.x * 150, fy + this.sunDir.y * 150, fz + this.sunDir.z * 150);
+    this.fill.target.position.set(fx, fy, fz);
+    this.fill.position.set(fx - 60, fy + 40, fz + 100);
   }
 }

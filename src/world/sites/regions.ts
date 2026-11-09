@@ -6,7 +6,7 @@ import { PlayerModel } from '../../player/PlayerModel';
 import { worldUvBox } from '../../render/textures';
 import { CITY_BLOCKS, RIVERS } from '../WorldDef';
 import { buildCabin, CABIN_FLOOR, furniture } from './cabin';
-import { fixedLight, inspectable, lootCrate, mesh, oneway, passage, readable, type SiteContext, signTexture, solid } from './kit';
+import { fixedLight, FULL_Z, inspectable, lootCrate, mesh, oneway, passage, readable, type SiteContext, signTexture, solid } from './kit';
 import { cliffLedges } from './places';
 import { tunnel, UG_Y } from './underground';
 
@@ -241,7 +241,7 @@ export function city(ctx: SiteContext): void {
     mesh(new THREE.BoxGeometry(14, 2.6, 2.8), carMat, 0, 1.3, 0, car);
     for (let i = -5; i <= 5; i += 2) mesh(new THREE.BoxGeometry(1.2, 0.8, 0.05), ctx.mats.glass, i, 1.7, 1.41, car, false);
     mesh(new THREE.BoxGeometry(14, 0.3, 2.85), new THREE.MeshStandardMaterial({ color: 0xc0392b }), 0, 0.7, 0, car);
-    solid(ctx, 805, 819, UG_Y, UG_Y + 2.6, 'metal');
+    solid(ctx, 805, 819, UG_Y, UG_Y + 2.6, 'metal', undefined, -2.4, 0.4);
     // Crates stacked against both ends of the carriage: a two-step climb.
     for (const [cx, h] of [
       [802.8, 0.9],
@@ -250,7 +250,7 @@ export function city(ctx: SiteContext): void {
       [819.8, 1.75],
     ] as const) {
       mesh(worldUvBox(1.2, h, 1.2, 0.8), ctx.mats.woodDark, cx, UG_Y + h / 2, -1.2, ctx.group);
-      oneway(ctx, cx - 0.6, cx + 0.6, UG_Y + h, 'wood');
+      oneway(ctx, cx - 0.6, cx + 0.6, UG_Y + h, 'wood', undefined, -1.8, -0.6);
     }
     fixedLight(ctx, 'metro-barrel', 'barrel', 840, UG_Y + 1, -2.2, 400, false);
     lootCrate(ctx, 'metro-crate', 860, UG_Y, -2, 'Abandoned luggage', [['canned_food', 1], ['cloth', 3], ['fuel', 1], ['bandage', 1]]);
@@ -264,7 +264,7 @@ export function city(ctx: SiteContext): void {
       slab.rotation.set(rng.range(-0.3, 0.3), rng.range(-0.3, 0.3), rng.range(-0.6, 0.6));
     }
     for (let i = 0; i < 6; i++) mesh(worldUvBox(1.6, 9, 1.6, 2), ctx.mats.concrete, 795 + i * 13, og + 4.5, -8, ctx.group);
-    solid(ctx, 788, 870, og - 6, og + 20, 'rock', 'overpass');
+    solid(ctx, 788, 870, og - 6, og + 20, 'rock', 'overpass', -14, 10);
     inspectable(ctx, 'overpass', 786, og + 1, 'Collapsed overpass', 2);
   }
 
@@ -336,7 +336,7 @@ export function coast(ctx: SiteContext): void {
     const top = bank + 0.35;
     mesh(worldUvBox(x1 - x0, 0.25, 2.6, 1.3), ctx.mats.woodDark, (x0 + x1) / 2, top - 0.12, -0.2, ctx.group);
     for (let x = x0 + 1; x < x1; x += 3.2) for (const z of [-1.3, 0.9]) mesh(new THREE.CylinderGeometry(0.14, 0.16, 5, 6), ctx.mats.woodDark, x, top - 2.5, z, ctx.group);
-    solid(ctx, x0, x1, top - 0.3, top, 'wood');
+    solid(ctx, x0, x1, top - 0.3, top, 'wood', undefined, -1.5, 1.1);
     // Small boat moored behind the pier
     const boat = new THREE.Group();
     boat.position.set(r.x + 3, t.riverWaterY(r) + 0.1, -4.2);
@@ -379,8 +379,10 @@ export function coast(ctx: SiteContext): void {
     lootCrate(ctx, 'meridian-crate', x - 4, g, -2, 'Ship’s stores', [['canned_food', 3], ['fuel', 2], ['metal', 4], ['cloth', 2]]);
     readable(ctx, 'meridian-dossier', x + 5, g + 0.9, 'Sealed briefcase', 'Open', 1.3);
     // Collision: bow wall, deck as a one-way platform reached by crates.
-    solid(ctx, x + 10.5, x + 14, g - 2, g + 6, 'metal');
-    oneway(ctx, x - 10.5, x + 10.5, g + 4.7, 'wood');
+    solid(ctx, x + 10.5, x + 14, g - 2, g + 6, 'metal', undefined, -3.6, 1.4);
+    oneway(ctx, x - 10.5, x + 10.5, g + 4.7, 'wood', undefined, -3.6, 1.4);
+    solid(ctx, x - 11, x + 11, g - 1, g + 4.6, 'metal', undefined, -3.75, -3.45);
+    solid(ctx, x - 11, x + 11, g - 1, g + 4.6, 'metal', undefined, 1.3, 1.5);
     // Stacked cargo inside the hold makes a way up to the deck.
     for (const [cx, h] of [
       [x - 8.8, 1.2],
@@ -388,10 +390,10 @@ export function coast(ctx: SiteContext): void {
       [x - 6.0, 3.6],
     ] as const) {
       mesh(worldUvBox(1.3, h, 1.3, 0.8), ctx.mats.woodDark, cx, g + h / 2, -1.6, ctx.group);
-      oneway(ctx, cx - 0.65, cx + 0.65, g + h, 'wood');
+      oneway(ctx, cx - 0.65, cx + 0.65, g + h, 'wood', undefined, -2.25, -0.95);
     }
-    ctx.fadeables.push({ x0: x - 11, x1: x + 11, y0: g - 1, y1: g + 4.5, materials: [front], meshes: [fp], opacity: 1 });
-    ctx.interiors.push({ x0: x - 10.5, x1: x + 10.5, y0: g - 1, y1: g + 4.6 });
+    ctx.fadeables.push({ x0: x - 11, x1: x + 11, y0: g - 1, y1: g + 4.5, z0: -3.6, z1: 1.4, materials: [front], meshes: [fp], opacity: 1 });
+    ctx.interiors.push({ x0: x - 10.5, x1: x + 10.5, y0: g - 1, y1: g + 4.6, z0: -3.6, z1: 1.4 });
   }
 
   // Sea caves (hidden discovery)
@@ -481,7 +483,7 @@ export function frost(ctx: SiteContext): void {
     for (let z = -12; z <= 10; z += 2.5) mesh(new THREE.CylinderGeometry(0.06, 0.06, 3.2, 6), ctx.mats.metal, x, g + 1.6, z, ctx.group);
     const fence = mesh(new THREE.PlaneGeometry(22, 2.8), new THREE.MeshStandardMaterial({ color: 0x8a9298, wireframe: true }), x, g + 1.5, -1, ctx.group, false);
     fence.rotation.y = Math.PI / 2;
-    solid(ctx, x - 6, x + 0.3, g - 5, g + 12, 'metal');
+    solid(ctx, x - 6, x + 0.3, g - 5, g + 12, 'metal', undefined, FULL_Z[0], FULL_Z[1]);
     inspectable(ctx, 'fence', x + 2, g + 1, 'Perimeter fence', 2.2);
   }
 
@@ -550,6 +552,7 @@ export function frost(ctx: SiteContext): void {
     j.root.position.set(fx - 1.4, UG_Y, -2.2);
     j.root.rotation.y = 0.9;
     j.sit();
+    j.root.userData.dynamic = true;
     ctx.group.add(j.root);
     ctx.npcs.push({ update: (dt) => j.idle(dt) });
     ctx.interactions.add({
@@ -569,6 +572,7 @@ export function frost(ctx: SiteContext): void {
     const cx = -836;
     mesh(worldUvBox(3.2, 1.6, 1, 1), ctx.mats.metal, cx, UG_Y + 0.8, -3.2, ctx.group);
     const lever = mesh(new THREE.BoxGeometry(0.12, 0.9, 0.12), ctx.mats.red, cx, UG_Y + 2, -2.7, ctx.group);
+    lever.userData.dynamic = true;
     lever.rotation.z = -0.4;
     const glow = new THREE.MeshStandardMaterial({ color: 0x0f2a20, emissive: 0x3cff9a, emissiveIntensity: 1.3 });
     mesh(new THREE.BoxGeometry(2.6, 0.5, 0.05), glow, cx, UG_Y + 1.3, -2.68, ctx.group, false);
@@ -604,7 +608,7 @@ export function frost(ctx: SiteContext): void {
   {
     const r = RIVERS.find((rv) => rv.id === 'frozen-lake')!;
     const top = t.riverWaterY(r);
-    solid(ctx, r.x - r.width / 2 - r.bank, r.x + r.width / 2 + r.bank, top - 2, top, 'ice');
+    solid(ctx, r.x - r.width / 2 - r.bank - 10, r.x + r.width / 2 + r.bank + 10, top - 2, top, 'ice', undefined, FULL_Z[0], FULL_Z[1]);
   }
 
   // Weather Hut 3

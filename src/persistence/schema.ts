@@ -3,12 +3,14 @@ import type { SerializedInventory, ItemStack } from '../inventory/Inventory';
 import type { Vitals } from '../survival/Survival';
 import type { StorySave } from '../story/StoryState';
 
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 3;
 
 export interface PlayerSave {
   x: number;
   y: number;
-  facing: 1 | -1;
+  z: number;
+  /** Facing direction in radians. */
+  heading: number;
 }
 
 export interface SaveData {
@@ -17,7 +19,7 @@ export interface SaveData {
   /** Seconds of play. */
   playTime: number;
   player: PlayerSave;
-  respawn: { x: number; y: number };
+  respawn: { x: number; y: number; z: number };
   world: { seed: number; time: number; weather: { state: string; timer: number } };
   survival: { vitals: Vitals; wetness: number; sickness: number };
   inventory: SerializedInventory;
@@ -47,6 +49,7 @@ const num = (v: unknown, path: string): number => {
   return v;
 };
 const optNum = (v: unknown, dflt: number): number => (typeof v === 'number' && Number.isFinite(v) ? v : dflt);
+const clampZ = (z: number): number => Math.max(-380, Math.min(380, z));
 const strArr = (v: unknown, path: string): string[] => {
   if (!Array.isArray(v)) throw new SaveError('corrupt', `Invalid list at ${path}`);
   return v.filter((s): s is string => typeof s === 'string');
@@ -73,6 +76,19 @@ export const MIGRATIONS: Record<number, (d: Record<string, unknown>) => Record<s
       resources: {},
       lights: {},
     };
+  },
+  // v2 was the 2.5D game: positions gain a depth, and 2.5D structures can't be placed on the
+  // 3D grid, so their pieces are refunded to the backpack.
+  2: (d) => {
+    const p = isObj(d.player) ? d.player : {};
+    const inv = Array.isArray(d.inventory) ? [...d.inventory] : [];
+    if (Array.isArray(d.structures)) {
+      for (const s of d.structures) {
+        if (isObj(s) && typeof s.piece === 'string') inv.push({ id: s.piece, qty: 1 });
+      }
+    }
+    const story = isObj(d.story) ? { ...d.story, explored: [] } : d.story;
+    return { ...d, player: { ...p, z: 1.5, heading: p.facing === -1 ? -Math.PI / 2 : Math.PI / 2 }, respawn: { ...(isObj(d.respawn) ? d.respawn : {}), z: 0 }, structures: [], inventory: inv, story };
   },
 };
 
@@ -123,8 +139,8 @@ export function validateSave(raw: unknown, clampX: (x: number) => number): SaveD
     version: SAVE_VERSION,
     savedAt: num(d.savedAt, 'savedAt'),
     playTime: Math.max(0, num(d.playTime, 'playTime')),
-    player: { x: clampX(num(p.x, 'player.x')), y: num(p.y, 'player.y'), facing: p.facing === -1 ? -1 : 1 },
-    respawn: { x: clampX(optNum(respawn.x, -3)), y: optNum(respawn.y, 0) },
+    player: { x: clampX(num(p.x, 'player.x')), y: num(p.y, 'player.y'), z: clampZ(optNum(p.z, 0)), heading: optNum(p.heading, 0) },
+    respawn: { x: clampX(optNum(respawn.x, -3)), y: optNum(respawn.y, 0), z: clampZ(optNum(respawn.z, 0)) },
     world: {
       seed: num(w.seed, 'world.seed'),
       time: Math.max(1, optNum(w.time, 1.3)),
@@ -139,7 +155,7 @@ export function validateSave(raw: unknown, clampX: (x: number) => number): SaveD
     },
     crafting: Array.isArray(d.crafting) ? d.crafting.filter((x): x is string => typeof x === 'string') : [],
     containers: (isObj(d.containers) ? d.containers : {}) as Record<string, SerializedInventory>,
-    structures: (Array.isArray(d.structures) ? d.structures.filter((x) => isObj(x) && typeof x.piece === 'string' && typeof x.cell === 'number' && typeof x.level === 'number' && typeof x.base === 'number') : []) as SavedPiece[],
+    structures: (Array.isArray(d.structures) ? d.structures.filter((x) => isObj(x) && typeof x.piece === 'string' && typeof x.i === 'number' && typeof x.j === 'number' && typeof x.level === 'number' && typeof x.base === 'number') : []) as SavedPiece[],
     resources,
     lights,
     story: {

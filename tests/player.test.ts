@@ -5,6 +5,7 @@ import { CollisionWorld } from '../src/physics/CollisionWorld';
 import { PlayerController } from '../src/player/PlayerController';
 import { Terrain } from '../src/world/Terrain';
 import { PLAYABLE, RIVERS, WORLD_SEED } from '../src/world/WorldDef';
+import { VALLEY_HALF } from '../src/world/Terrain';
 
 class FakeInput {
   held = new Set<Action>();
@@ -22,9 +23,11 @@ class FakeInput {
 
 const terrain = new Terrain(WORLD_SEED);
 function setup(x: number) {
-  const world = new CollisionWorld(terrain, { min: PLAYABLE.min, max: PLAYABLE.max });
+  const world = new CollisionWorld(terrain, { minX: PLAYABLE.min, maxX: PLAYABLE.max, minZ: -VALLEY_HALF, maxZ: VALLEY_HALF });
   const events = createEventBus();
-  const p = new PlayerController(world, events, x, 0);
+  const p = new PlayerController(world, events, x, 0, 0);
+  // Camera looking along −z: 'right' moves +x, 'up' moves −z.
+  p.cameraYaw = 0;
   p.placeAt(x);
   return { p, events, world };
 }

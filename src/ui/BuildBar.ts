@@ -16,7 +16,7 @@ export class BuildBar {
       { class: 'build' },
       this.status,
       this.list,
-      h('div', { class: 'build__help', html: '<kbd>Click</kbd> place · <kbd>X</kbd> demolish mode · <kbd>1</kbd>–<kbd>9</kbd> choose · <kbd>B</kbd> done' }),
+      h('div', { class: 'build__help', html: 'Aim with the crosshair · <kbd>Click</kbd> place · <kbd>R</kbd> rotate · <kbd>X</kbd> demolish · <kbd>1</kbd>–<kbd>6</kbd> choose · <kbd>B</kbd> done' }),
     );
     root.append(this.el);
   }

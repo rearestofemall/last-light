@@ -35,7 +35,7 @@ export class HUD {
   private prompt: HTMLElement;
   private promptText: HTMLElement;
   private promptAlt: HTMLElement;
-  private promptWorld: { x: number; y: number } | null = null;
+  private promptWorld: { x: number; y: number; z: number } | null = null;
   private banner: HTMLElement;
   private bannerRegion = h('div', { class: 'banner__region' });
   private bannerName = h('div', { class: 'banner__name' });
@@ -56,6 +56,7 @@ export class HUD {
   private hotbarName = h('div', { class: 'hud__hotbar-name' });
   private hotbarNameTimer = 0;
   private gloom = h('div', { class: 'hud__gloom' });
+  private crosshair = h('div', { class: 'hud__crosshair' });
   private hurt = h('div', { class: 'hud__hurt' });
   private hurtLevel = 0;
   private list: Toast[] = [];
@@ -82,6 +83,7 @@ export class HUD {
       { class: 'hud' },
       this.gloom,
       this.hurt,
+      this.crosshair,
       h('div', { class: 'hud__topleft' }, this.location, this.objective),
       this.info,
       this.banner,
@@ -99,7 +101,7 @@ export class HUD {
       if (p) {
         this.promptText.textContent = p.text;
         this.promptAlt.innerHTML = p.alt ? `<kbd>R</kbd>${p.alt}` : '';
-        this.promptWorld = { x: p.worldX, y: p.worldY };
+        this.promptWorld = { x: p.worldX, y: p.worldY, z: p.worldZ };
       } else this.promptWorld = null;
       this.prompt.classList.toggle('is-visible', p !== null);
     });
@@ -124,6 +126,10 @@ export class HUD {
 
   setVisible(v: boolean): void {
     show(this.el, v);
+  }
+
+  setCrosshair(v: boolean): void {
+    this.crosshair.style.display = v ? '' : 'none';
   }
 
   setLocation(region: string, name: string): void {
@@ -240,7 +246,7 @@ export class HUD {
   update(dt: number, project: Projector, fps: number | null): void {
     this.time += dt;
     if (this.promptWorld) {
-      const p = project(this.promptWorld.x, this.promptWorld.y + 0.9, 0);
+      const p = project(this.promptWorld.x, this.promptWorld.y + 0.9, this.promptWorld.z);
       this.prompt.style.transform = `translate(${Math.round(p.x)}px, ${Math.round(p.y)}px) translate(-50%, -100%)`;
     }
     if (this.bannerTimer > 0) {

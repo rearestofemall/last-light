@@ -1,5 +1,6 @@
 import type { GameEventBus } from '../core/events';
 import type { Terrain } from '../world/Terrain';
+import type { Poi } from '../world/sites/poi';
 import { Backpack, type BackpackHost } from './Backpack';
 import { BuildBar } from './BuildBar';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -42,6 +43,7 @@ export class UIManager {
     backpackHost: BackpackHost,
     terrain: () => Terrain,
     loading: LoadingScreen,
+    pois: () => Poi[],
   ) {
     this.loading = loading;
     const actions = {
@@ -54,7 +56,7 @@ export class UIManager {
     this.menu = new MainMenu(root, events, api, actions);
     this.pause = new PauseMenu(root, events, api, actions);
     this.backpack = new Backpack(root, events, backpackHost);
-    this.map = new MapScreen(root, events, terrain);
+    this.map = new MapScreen(root, events, terrain, pois);
     this.journal = new Journal(root, events);
     this.reader = new NoteReader(root, events);
     this.settings = new SettingsPanel(root, events, api.settings);

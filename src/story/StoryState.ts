@@ -9,7 +9,12 @@ export interface StorySave {
   explored?: number[];
 }
 
-export const MAP_BIN = 20;
+export const MAP_BIN = 24;
+
+/** Integer key of the explored map cell containing (x, z). */
+export function exploredKey(x: number, z: number): number {
+  return (Math.floor(x / MAP_BIN) + 100) * 1000 + (Math.floor(z / MAP_BIN) + 500);
+}
 
 /** Tracks what the player has read, discovered and done. */
 export class StoryState {
@@ -42,8 +47,9 @@ export class StoryState {
     return true;
   }
 
-  explore(x: number): void {
-    this.explored.add(Math.floor(x / MAP_BIN));
+  /** Mark the map cell at (x, z) explored (cells are MAP_BIN metres square). */
+  explore(x: number, z = 0): void {
+    this.explored.add(exploredKey(x, z));
   }
 
   serialize(): StorySave {

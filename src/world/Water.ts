@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { sharedUniforms } from '../render/materials';
 import type { Terrain } from './Terrain';
-import { TERRAIN_Z_BACK, TERRAIN_Z_FRONT } from './Terrain';
+import { TERRAIN_Z_MAX, TERRAIN_Z_MIN } from './Terrain';
 import type { RiverDef } from './WorldDef';
 
 /**
@@ -51,11 +51,11 @@ export function createWaterMaterial(color = 0x2f5a5c): THREE.MeshStandardMateria
 }
 
 export function createRiverMesh(terrain: Terrain, r: RiverDef, material: THREE.Material): THREE.Mesh {
-  const halfW = r.width / 2 + r.bank + 10;
+  const halfW = r.width / 2 + r.bank + 12;
   const xs: number[] = [];
-  for (let x = -halfW; x <= halfW + 0.01; x += 1) xs.push(r.x + x);
+  for (let x = -halfW; x <= halfW + 0.01; x += 2) xs.push(r.x + x);
   const zs: number[] = [];
-  for (let z = TERRAIN_Z_FRONT; z >= TERRAIN_Z_BACK; z -= z > -20 ? 1.5 : 4) zs.push(z);
+  for (let z = TERRAIN_Z_MAX; z >= TERRAIN_Z_MIN; z -= 3) zs.push(z);
   const pos: number[] = [];
   const idx: number[] = [];
   for (let j = 0; j < zs.length; j++) {

@@ -24,7 +24,7 @@ interface Hint {
 }
 
 const HINTS: Hint[] = [
-  { id: 'move', text: '[A] [D] Move', when: () => true, done: (c) => c.moved > 5 },
+  { id: 'move', text: '[W] [A] [S] [D] Move · move the mouse to look (click to capture it)', when: () => true, done: (c) => c.moved > 6 },
   { id: 'note', text: 'Walk up to the tent and press [E] to read J.’s note', when: (c) => !c.story.readNotes.has('j-note-1'), done: (c) => c.story.readNotes.has('j-note-1') },
   { id: 'jump', text: '[Space] Jump — hold for height', when: (c) => c.moved > 5, done: (c) => c.jumped },
   { id: 'gather', text: 'Press [E] at branches, bushes, grass and rocks to gather materials', when: (c) => c.story.readNotes.has('j-note-1'), done: (c) => c.inv.count('wood') + c.inv.count('fiber') + c.inv.count('stone') >= 4 },
@@ -39,6 +39,7 @@ const HINTS: Hint[] = [
 export class Tutorial {
   private ctx: Omit<Ctx, 'p' | 'clock' | 'inv'> & { moved: number } = { moved: 0, jumped: false, sprintTime: 0, story: null as unknown as StoryState };
   private lastX = 0;
+  private lastZ = 0;
   private showing: string | null = null;
   private shownFor = 0;
   private delay = 2;
@@ -63,8 +64,9 @@ export class Tutorial {
   }
 
   update(dt: number, p: PlayerController, clock: WorldClock, inv: Inventory): void {
-    this.ctx.moved += Math.abs(p.body.x - this.lastX);
+    this.ctx.moved += Math.hypot(p.body.x - this.lastX, p.body.z - this.lastZ);
     this.lastX = p.body.x;
+    this.lastZ = p.body.z;
     if (p.sprinting) this.ctx.sprintTime += dt;
     if (!this.enabled) {
       if (this.showing) this.hide();

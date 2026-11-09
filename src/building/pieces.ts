@@ -3,11 +3,8 @@ import { plankTexture, shingleTexture, stoneTexture, worldUvBox } from '../rende
 
 export const CELL = 2;
 export const LEVEL_H = 3;
-export const Z_BACK = -3;
-export const Z_FRONT = 1.5;
-export const DEPTH = Z_FRONT - Z_BACK;
 
-export type Slot = 'floor' | 'edge' | 'back' | 'roof' | 'furn';
+export type Slot = 'floor' | 'edge' | 'roof' | 'furn';
 
 export interface PieceDef {
   id: string;
@@ -20,9 +17,9 @@ export interface PieceDef {
 export const PIECES: Record<string, PieceDef> = {
   floor: { id: 'floor', name: 'Wooden Floor', slot: 'floor', item: 'floor' },
   wall: { id: 'wall', name: 'Wooden Wall', slot: 'edge', item: 'wall' },
+  backwall: { id: 'backwall', name: 'Plank Wall', slot: 'edge', item: 'backwall' },
+  window: { id: 'window', name: 'Window Wall', slot: 'edge', item: 'window' },
   door: { id: 'door', name: 'Door', slot: 'edge', item: 'door' },
-  backwall: { id: 'backwall', name: 'Back Wall', slot: 'back', item: 'backwall' },
-  window: { id: 'window', name: 'Window Wall', slot: 'back', item: 'window' },
   roof: { id: 'roof', name: 'Roof', slot: 'roof', item: 'roof' },
   campfire: { id: 'campfire', name: 'Campfire', slot: 'furn', item: 'campfire' },
   chest: { id: 'chest', name: 'Storage Chest', slot: 'furn', item: 'chest' },
@@ -39,6 +36,7 @@ export function pieceMaterials(): Record<string, THREE.MeshStandardMaterial> {
   const std = (o: THREE.MeshStandardMaterialParameters) => new THREE.MeshStandardMaterial({ roughness: 0.9, ...o });
   mats = {
     wood: std({ map: plankTexture(), color: 0xe0cbb0 }),
+    light: std({ map: plankTexture(), color: 0xf0e2c8 }),
     dark: std({ map: plankTexture(), color: 0x8d7863 }),
     roof: std({ map: shingleTexture(), color: 0xd0c4b8 }),
     stone: std({ map: stoneTexture() }),
@@ -51,7 +49,7 @@ export function pieceMaterials(): Record<string, THREE.MeshStandardMaterial> {
   return mats;
 }
 
-function add(g: THREE.Group, geo: THREE.BufferGeometry, m: THREE.Material, x: number, y: number, z: number, cast = true): THREE.Mesh {
+function add(g: THREE.Object3D, geo: THREE.BufferGeometry, m: THREE.Material, x: number, y: number, z: number, cast = true): THREE.Mesh {
   const mesh = new THREE.Mesh(geo, m);
   mesh.position.set(x, y, z);
   mesh.castShadow = cast;
@@ -61,105 +59,102 @@ function add(g: THREE.Group, geo: THREE.BufferGeometry, m: THREE.Material, x: nu
 }
 
 /**
- * Builds the visual for a piece in local space. Origin: x = left edge of the cell
- * (or the edge line for edge pieces), y = floor level of the piece's storey, z = 0 plane.
+ * Builds the visual for a piece in local space.
+ *  - Cell pieces: origin at the cell's (minX, floorY, minZ) corner; content in [0, 2] × [0, 2].
+ *  - Edge pieces: a wall along +z from the origin, 2 m long, centred on x = 0
+ *    (rotated by the caller for walls along x).
  */
 export function buildPieceMesh(id: string, groundLevel: boolean): { group: THREE.Group; door?: THREE.Object3D; lid?: THREE.Object3D } {
   const m = pieceMaterials();
   const g = new THREE.Group();
-  const zc = (Z_BACK + Z_FRONT) / 2;
+  const C = CELL;
+  const h = C / 2;
   let door: THREE.Object3D | undefined;
   let lid: THREE.Object3D | undefined;
   switch (id) {
     case 'floor':
-      add(g, worldUvBox(CELL, 0.3, DEPTH, 1.3), m.dark, CELL / 2, -0.15, zc);
-      if (groundLevel) {
-        for (const x of [0.25, CELL - 0.25]) for (const z of [Z_BACK + 0.3, Z_FRONT - 0.3]) add(g, worldUvBox(0.4, 1.2, 0.4), m.stone, x, -0.85, z);
-      }
+      add(g, worldUvBox(C, 0.3, C, 1.3), m.dark, h, -0.15, h);
+      if (groundLevel) for (const x of [0.2, C - 0.2]) for (const z of [0.2, C - 0.2]) add(g, worldUvBox(0.35, 1.4, 0.35), m.stone, x, -0.85, z);
       break;
     case 'wall':
-      add(g, worldUvBox(0.24, LEVEL_H, DEPTH), m.wood, 0, LEVEL_H / 2, zc);
-      add(g, new THREE.CylinderGeometry(0.13, 0.15, LEVEL_H, 6), m.dark, 0, LEVEL_H / 2, Z_FRONT);
+    case 'backwall':
+      add(g, worldUvBox(0.22, LEVEL_H, C, 1.2), id === 'wall' ? m.wood : m.light, 0, LEVEL_H / 2, h);
+      add(g, new THREE.CylinderGeometry(0.12, 0.14, LEVEL_H, 6), m.dark, 0, LEVEL_H / 2, 0);
+      break;
+    case 'window':
+      add(g, worldUvBox(0.22, 0.9, C), m.wood, 0, 0.45, h);
+      add(g, worldUvBox(0.22, LEVEL_H - 2.1, C), m.wood, 0, 2.1 + (LEVEL_H - 2.1) / 2, h);
+      add(g, worldUvBox(0.22, 1.2, 0.35), m.wood, 0, 1.5, 0.175);
+      add(g, worldUvBox(0.22, 1.2, 0.35), m.wood, 0, 1.5, C - 0.175);
+      add(g, new THREE.BoxGeometry(0.04, 1.2, C - 0.7), m.glass, 0, 1.5, h, false);
+      add(g, new THREE.CylinderGeometry(0.12, 0.14, LEVEL_H, 6), m.dark, 0, LEVEL_H / 2, 0);
       break;
     case 'door': {
       const dh = 2.3;
-      add(g, worldUvBox(0.24, LEVEL_H - dh, DEPTH), m.wood, 0, dh + (LEVEL_H - dh) / 2, zc);
-      add(g, worldUvBox(0.24, dh, Z_FRONT - 1.0), m.wood, 0, dh / 2, (Z_FRONT + 1.0) / 2);
-      add(g, worldUvBox(0.24, dh, -1.0 - Z_BACK), m.wood, 0, dh / 2, (-1.0 + Z_BACK) / 2);
+      add(g, worldUvBox(0.22, LEVEL_H - dh, C), m.wood, 0, dh + (LEVEL_H - dh) / 2, h);
+      add(g, worldUvBox(0.22, dh, 0.25), m.dark, 0, dh / 2, 0.125);
+      add(g, worldUvBox(0.22, dh, 0.25), m.dark, 0, dh / 2, C - 0.125);
       const pivot = new THREE.Group();
-      pivot.position.set(0, 0, -1.0);
+      pivot.position.set(0, 0, 0.25);
       g.add(pivot);
-      add(pivot, worldUvBox(0.1, dh - 0.05, 2.0), m.dark, 0, (dh - 0.05) / 2, 1.0);
-      add(pivot, new THREE.SphereGeometry(0.05, 6, 4), m.metal, 0.08, 1.1, 1.75);
+      add(pivot, worldUvBox(0.08, dh - 0.05, C - 0.5), m.dark, 0, (dh - 0.05) / 2, (C - 0.5) / 2);
+      add(pivot, new THREE.SphereGeometry(0.05, 6, 4), m.metal, 0.08, 1.1, C - 0.75);
       door = pivot;
       break;
     }
-    case 'backwall':
-      add(g, worldUvBox(CELL, LEVEL_H, 0.2), m.wood, CELL / 2, LEVEL_H / 2, Z_BACK);
-      break;
-    case 'window':
-      add(g, worldUvBox(CELL, 0.9, 0.2), m.wood, CELL / 2, 0.45, Z_BACK);
-      add(g, worldUvBox(CELL, LEVEL_H - 2.1, 0.2), m.wood, CELL / 2, 2.1 + (LEVEL_H - 2.1) / 2, Z_BACK);
-      add(g, worldUvBox(0.35, 1.2, 0.2), m.wood, 0.175, 1.5, Z_BACK);
-      add(g, worldUvBox(0.35, 1.2, 0.2), m.wood, CELL - 0.175, 1.5, Z_BACK);
-      add(g, new THREE.PlaneGeometry(CELL - 0.7, 1.2), m.glass, CELL / 2, 1.5, Z_BACK + 0.02, false);
-      add(g, new THREE.BoxGeometry(0.06, 1.2, 0.08), m.dark, CELL / 2, 1.5, Z_BACK + 0.06);
-      break;
     case 'roof': {
-      const slab = add(g, worldUvBox(CELL + 0.1, 0.22, DEPTH + 1.2, 1.6), m.roof, CELL / 2, LEVEL_H + 0.25, zc);
-      slab.rotation.x = 0.12;
-      add(g, worldUvBox(CELL, 0.18, 0.18), m.dark, CELL / 2, LEVEL_H - 0.05, Z_FRONT);
+      const slab = add(g, worldUvBox(C + 0.15, 0.2, C + 0.15, 1.6), m.roof, h, LEVEL_H + 0.1, h);
+      slab.castShadow = true;
+      add(g, worldUvBox(C, 0.16, 0.16), m.dark, h, LEVEL_H - 0.08, 0.08);
       break;
     }
     case 'campfire': {
       for (let i = 0; i < 9; i++) {
         const a = (i / 9) * Math.PI * 2;
-        const s = add(g, new THREE.DodecahedronGeometry(0.17, 0), m.stone, CELL / 2 + Math.cos(a) * 0.55, 0.08, -0.6 + Math.sin(a) * 0.45);
+        const s = add(g, new THREE.DodecahedronGeometry(0.17, 0), m.stone, h + Math.cos(a) * 0.55, 0.08, h + Math.sin(a) * 0.5);
         s.rotation.set(i, i * 2, 0);
       }
       for (let i = 0; i < 4; i++) {
-        const log = add(g, new THREE.CylinderGeometry(0.06, 0.08, 0.8, 6), m.dark, CELL / 2, 0.12, -0.6);
+        const log = add(g, new THREE.CylinderGeometry(0.06, 0.08, 0.8, 6), m.dark, h, 0.12, h);
         log.rotation.set(Math.PI / 2 - 0.3, (i / 4) * Math.PI * 2, 0);
       }
-      add(g, new THREE.CylinderGeometry(0.45, 0.5, 0.05, 10), m.char, CELL / 2, 0.02, -0.6, false);
+      add(g, new THREE.CylinderGeometry(0.45, 0.5, 0.05, 10), m.char, h, 0.02, h, false);
       break;
     }
     case 'chest': {
-      add(g, worldUvBox(1.1, 0.55, 0.65, 0.7), m.dark, CELL / 2, 0.28, -1.8);
+      add(g, worldUvBox(1.1, 0.55, 0.65, 0.7), m.dark, h, 0.28, h);
       const lp = new THREE.Group();
-      lp.position.set(CELL / 2, 0.55, -2.12);
+      lp.position.set(h, 0.55, h - 0.33);
       g.add(lp);
       add(lp, worldUvBox(1.14, 0.14, 0.68, 0.7), m.wood, 0, 0.07, 0.33);
-      add(g, new THREE.BoxGeometry(1.16, 0.06, 0.04), m.metal, CELL / 2, 0.4, -1.46);
       lid = lp;
       break;
     }
     case 'bedroll':
-      add(g, new THREE.BoxGeometry(1.8, 0.14, 0.75), m.cloth, CELL / 2, 0.07, -1.8);
-      add(g, new THREE.CylinderGeometry(0.17, 0.17, 0.75, 8).rotateX(Math.PI / 2), m.red, CELL / 2 - 0.8, 0.17, -1.8);
+      add(g, new THREE.BoxGeometry(0.8, 0.14, 1.8), m.cloth, h, 0.07, h);
+      add(g, new THREE.CylinderGeometry(0.17, 0.17, 0.8, 8).rotateZ(Math.PI / 2), m.red, h, 0.17, h - 0.8);
       break;
     case 'bed':
-      add(g, worldUvBox(1.9, 0.4, 0.95), m.dark, CELL / 2, 0.25, -2.2);
-      add(g, new THREE.BoxGeometry(1.8, 0.16, 0.86), m.cloth, CELL / 2, 0.52, -2.2);
-      add(g, new THREE.BoxGeometry(1.1, 0.1, 0.9), m.red, CELL / 2 + 0.3, 0.62, -2.2);
-      add(g, worldUvBox(0.1, 0.9, 0.95), m.dark, CELL / 2 - 0.95, 0.45, -2.2);
+      add(g, worldUvBox(0.95, 0.4, 1.9), m.dark, h, 0.25, h);
+      add(g, new THREE.BoxGeometry(0.86, 0.16, 1.8), m.cloth, h, 0.52, h);
+      add(g, new THREE.BoxGeometry(0.9, 0.1, 1.1), m.red, h, 0.62, h + 0.3);
+      add(g, worldUvBox(0.95, 0.9, 0.1), m.dark, h, 0.45, h - 0.95);
       break;
     case 'table':
-      add(g, worldUvBox(1.6, 0.08, 0.9), m.dark, CELL / 2, 0.88, -0.4);
-      for (const sx of [-1, 1]) for (const sz of [-1, 1]) add(g, new THREE.BoxGeometry(0.08, 0.84, 0.08), m.dark, CELL / 2 + sx * 0.7, 0.42, -0.4 + sz * 0.35);
+      add(g, worldUvBox(1.6, 0.08, 0.9), m.dark, h, 0.88, h);
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) add(g, new THREE.BoxGeometry(0.08, 0.84, 0.08), m.dark, h + sx * 0.7, 0.42, h + sz * 0.35);
       break;
     case 'workbench':
-      add(g, worldUvBox(1.8, 0.12, 0.9), m.wood, CELL / 2, 0.9, -1.9);
-      for (const sx of [-1, 1]) add(g, worldUvBox(0.12, 0.84, 0.8), m.dark, CELL / 2 + sx * 0.8, 0.42, -1.9);
-      add(g, worldUvBox(1.6, 0.06, 0.7), m.dark, CELL / 2, 0.3, -1.9);
-      add(g, new THREE.BoxGeometry(0.25, 0.18, 0.16), m.metal, CELL / 2 + 0.6, 1.05, -1.6);
-      add(g, new THREE.BoxGeometry(0.5, 0.04, 0.06), m.metal, CELL / 2 - 0.3, 0.98, -1.7);
-      add(g, worldUvBox(1.8, 1.2, 0.08), m.dark, CELL / 2, 1.55, -2.35);
+      add(g, worldUvBox(1.8, 0.12, 0.9), m.wood, h, 0.9, h);
+      for (const sx of [-1, 1]) add(g, worldUvBox(0.12, 0.84, 0.8), m.dark, h + sx * 0.8, 0.42, h);
+      add(g, worldUvBox(1.6, 0.06, 0.7), m.dark, h, 0.3, h);
+      add(g, new THREE.BoxGeometry(0.25, 0.18, 0.16), m.metal, h + 0.6, 1.05, h + 0.2);
+      add(g, worldUvBox(1.8, 1.2, 0.08), m.dark, h, 1.55, h - 0.45);
       break;
     case 'lamp':
-      add(g, new THREE.CylinderGeometry(0.05, 0.06, 2.1, 6), m.dark, CELL / 2, 1.05, -1.2);
-      add(g, new THREE.BoxGeometry(0.6, 0.06, 0.06), m.dark, CELL / 2 + 0.25, 2.05, -1.2);
-      add(g, new THREE.CylinderGeometry(0.11, 0.13, 0.28, 8), m.metal, CELL / 2 + 0.5, 1.82, -1.2);
+      add(g, new THREE.CylinderGeometry(0.05, 0.06, 2.1, 6), m.dark, h, 1.05, h);
+      add(g, new THREE.BoxGeometry(0.6, 0.06, 0.06), m.dark, h + 0.25, 2.05, h);
+      add(g, new THREE.CylinderGeometry(0.11, 0.13, 0.28, 8), m.metal, h + 0.5, 1.82, h);
       break;
   }
   return { group: g, door, lid };

@@ -908,3 +908,16 @@
   width: auto;
   padding-left: 30px;
 }
+
+.hud__crosshair {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0 -3px;
+  border-radius: 50%;
+  background: rgba(236, 228, 210, 0.75);
+  box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}

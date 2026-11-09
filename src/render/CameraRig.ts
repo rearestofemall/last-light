@@ -1,108 +1,125 @@
 import * as THREE from 'three';
 import { clamp, damp } from '../core/math';
 
-export const CAMERA_PITCH = THREE.MathUtils.degToRad(9);
-/** Distance from the camera to the gameplay plane (fog is measured from here). */
-export const CAMERA_DISTANCE = 140;
-const DISTANCE = CAMERA_DISTANCE;
-
 /**
- * Orthographic 2.5D camera. Looks at the gameplay plane from +Z, pitched down slightly
- * so the depth of the world is visible. Follows a target with look-ahead and smoothing.
+ * Third-person orbit camera. Mouse (pointer lock) controls yaw and pitch, the wheel
+ * zooms, and the camera pulls in when terrain would come between it and the player.
  */
 export class CameraRig {
-  readonly camera: THREE.OrthographicCamera;
-  /** World-space point on the gameplay plane the camera is centred on. */
+  readonly camera: THREE.PerspectiveCamera;
+  /** Point the camera orbits (player head). */
   readonly focus = new THREE.Vector3();
-  viewHeight = 16.5;
-  zoomTarget = 16.5;
-  readonly minZoom = 11;
-  readonly maxZoom = 28;
-  /** Horizontal limits for the camera focus (world bounds). */
-  bounds = { min: -Infinity, max: Infinity };
-  private lookAhead = 0;
-  private aspect = 16 / 9;
+  /** Horizontal angle; 0 = camera south of the player looking north (−z). */
+  yaw = 0;
+  pitch = 0.32;
+  distance = 7.5;
+  zoomTarget = 7.5;
+  readonly minZoom = 2.6;
+  readonly maxZoom = 16;
+  sensitivity = 0.0025;
+  /** Height function for camera collision. */
+  ground: ((x: number, z: number) => number) | null = null;
   private shake = 0;
   private shakeT = 0;
+  private aspect = 16 / 9;
+  private smoothedDist = 7.5;
+  /** Unused in 3D; kept for API compatibility with the 2.5D rig. */
+  bounds = { min: -Infinity, max: Infinity };
+  /** For fade/occlusion helpers. */
+  get viewHeight(): number {
+    return this.smoothedDist * 2;
+  }
 
   constructor() {
-    this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 900);
-    this.applyProjection();
+    this.camera = new THREE.PerspectiveCamera(58, 16 / 9, 0.25, 900);
   }
 
   setAspect(aspect: number): void {
     this.aspect = aspect;
-    this.applyProjection();
+    this.camera.aspect = aspect;
+    this.camera.updateProjectionMatrix();
   }
 
   get viewWidth(): number {
     return this.viewHeight * this.aspect;
   }
 
-  private applyProjection(): void {
-    const h = this.viewHeight / 2;
-    const w = h * this.aspect;
-    const c = this.camera;
-    c.left = -w;
-    c.right = w;
-    c.top = h;
-    c.bottom = -h;
-    c.updateProjectionMatrix();
+  look(dx: number, dy: number): void {
+    this.yaw -= dx * this.sensitivity;
+    this.pitch = clamp(this.pitch + dy * this.sensitivity, -0.35, 1.2);
   }
 
   zoom(steps: number): void {
-    this.zoomTarget = clamp(this.zoomTarget + steps * 1.5, this.minZoom, this.maxZoom);
+    this.zoomTarget = clamp(this.zoomTarget + steps * 1.1, this.minZoom, this.maxZoom);
   }
 
   addShake(amount: number): void {
     this.shake = Math.min(1, this.shake + amount);
   }
 
-  /** Jump straight to a target (no smoothing), e.g. after loading. */
-  snapTo(x: number, y: number): void {
-    this.lookAhead = 0;
-    this.focus.set(this.clampX(x), y + 2.6, 0);
-    this.applyTransform();
+  /** Unit vectors of the camera's heading on the ground plane. */
+  forward(out = new THREE.Vector3()): THREE.Vector3 {
+    return out.set(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
   }
 
-  private clampX(x: number): number {
-    const half = this.viewWidth / 2;
-    const lo = this.bounds.min + half - 12;
-    const hi = this.bounds.max - half + 12;
-    return lo > hi ? (lo + hi) / 2 : clamp(x, lo, hi);
+  right(out = new THREE.Vector3()): THREE.Vector3 {
+    return out.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
   }
 
-  follow(dt: number, x: number, y: number, vx: number): void {
-    this.lookAhead = damp(this.lookAhead, clamp(vx * 0.45, -3.5, 3.5), 2.2, dt);
-    const tx = this.clampX(x + this.lookAhead);
-    this.focus.x = damp(this.focus.x, tx, 6, dt);
-    this.focus.y = damp(this.focus.y, y + 2.6, 4, dt);
-    this.update(dt);
+  snapTo(x: number, y: number, z = 0): void {
+    this.focus.set(x, y + 1.6, z);
+    this.smoothedDist = this.distance = this.zoomTarget;
+    this.apply(0);
   }
 
-  /** Free camera movement (menu attract mode). */
-  pan(dt: number, x: number, y: number): void {
+  follow(dt: number, x: number, y: number, z: number): void {
+    this.focus.x = damp(this.focus.x, x, 14, dt);
+    this.focus.z = damp(this.focus.z, z, 14, dt);
+    this.focus.y = damp(this.focus.y, y + 1.6, 9, dt);
+    this.distance = damp(this.distance, this.zoomTarget, 8, dt);
+    this.apply(dt);
+  }
+
+  /** Slow cinematic orbit (main menu). */
+  pan(dt: number, x: number, y: number, z = 0): void {
+    this.yaw += dt * 0.03;
     this.focus.x = damp(this.focus.x, x, 0.8, dt);
     this.focus.y = damp(this.focus.y, y, 0.8, dt);
-    this.update(dt);
+    this.focus.z = damp(this.focus.z, z, 0.8, dt);
+    this.pitch = 0.18;
+    this.distance = damp(this.distance, 16, 1, dt);
+    this.apply(dt);
   }
 
-  private update(dt: number): void {
-    if (Math.abs(this.viewHeight - this.zoomTarget) > 0.001) {
-      this.viewHeight = damp(this.viewHeight, this.zoomTarget, 6, dt);
-      this.applyProjection();
-    }
+  private apply(dt: number): void {
     this.shakeT += dt;
     this.shake = Math.max(0, this.shake - dt * 2.5);
-    this.applyTransform();
-  }
-
-  private applyTransform(): void {
-    const s = this.shake * this.shake * 0.35;
+    const f = this.focus;
+    const cp = Math.cos(this.pitch);
+    const dir = new THREE.Vector3(Math.sin(this.yaw) * cp, Math.sin(this.pitch), Math.cos(this.yaw) * cp);
+    // Pull in when the terrain would block the view.
+    let d = this.distance;
+    if (this.ground) {
+      for (let s = 0.6; s <= this.distance; s += 0.5) {
+        const px = f.x + dir.x * s;
+        const pz = f.z + dir.z * s;
+        const py = f.y + dir.y * s;
+        if (py < this.ground(px, pz) + 0.4) {
+          d = Math.max(0.6, s - 0.5);
+          break;
+        }
+      }
+    }
+    this.smoothedDist = dt > 0 && d > this.smoothedDist ? damp(this.smoothedDist, d, 4, dt) : d;
+    const s = this.shake * this.shake * 0.25;
     const ox = s * Math.sin(this.shakeT * 53);
     const oy = s * Math.sin(this.shakeT * 41 + 1.3);
-    const f = this.focus;
-    this.camera.position.set(f.x + ox, f.y + oy + Math.sin(CAMERA_PITCH) * DISTANCE, f.z + Math.cos(CAMERA_PITCH) * DISTANCE);
+    this.camera.position.set(f.x + dir.x * this.smoothedDist + ox, f.y + dir.y * this.smoothedDist + oy, f.z + dir.z * this.smoothedDist);
+    // Keep the camera above ground even when pitched low.
+    if (this.ground) {
+      const g = this.ground(this.camera.position.x, this.camera.position.z) + 0.35;
+      if (this.camera.position.y < g) this.camera.position.y = g;
+    }
     this.camera.lookAt(f.x + ox, f.y + oy, f.z);
     this.camera.updateMatrixWorld();
   }

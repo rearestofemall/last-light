@@ -3,23 +3,18 @@ import { clamp, lerp, smoothstep } from '../core/math';
 import { hashSeed, Rng } from '../core/rng';
 import type { QualityProfile } from '../core/Settings';
 import { addWindSway, vertexColorMaterial } from '../render/materials';
-import { type Terrain, TERRAIN_Z_BACK, TERRAIN_Z_FRONT } from './Terrain';
+import { type Terrain, VALLEY_HALF } from './Terrain';
 import type { VegetationLibrary, VegKind } from './vegetation';
 import { CLEARINGS, inCityBlock, REGIONS, regionAt, regionWeight, type RegionId, RIVERS, SEA_Y } from './WorldDef';
 
 export const CHUNK_SIZE = 48;
 
-/** Depth rows of the terrain mesh: dense near the gameplay plane, sparse far away. */
-const Z_ROWS = [
-  TERRAIN_Z_FRONT, 32, 27, 23, 19.5, 16.5, 14, 11.5, 9.5, 7.5, 6, 4.5, 3.2, 2, 1, 0, -1, -2, -3.2, -4.5, -6, -7.5, -9.5, -12, -15, -18.5,
-  -22.5, -27, -32, -38, -45, -53, -62, -72, -83, -96, TERRAIN_Z_BACK,
-];
-/** Rows behind this depth use every other column (far terrain needs less detail). */
-const COARSE_Z = -30;
-const SKIRT_DEPTH = 34;
+/** Terrain vertex spacing in metres. */
+const STEP = 2;
 
 export interface Chunk {
-  index: number;
+  i: number;
+  j: number;
   group: THREE.Group;
   dispose(): void;
 }
@@ -149,35 +144,26 @@ export class ChunkBuilder {
     this.materials = materials;
   }
 
-  build(index: number): Chunk {
+  build(i: number, j: number): Chunk {
     const group = new THREE.Group();
-    group.name = `chunk-${index}`;
-    const x0 = index * CHUNK_SIZE;
-    const geos: THREE.BufferGeometry[] = [];
-
-    const tGeo = this.buildTerrain(x0);
-    geos.push(tGeo);
+    group.name = `chunk-${i}-${j}`;
+    const x0 = i * CHUNK_SIZE;
+    const z0 = j * CHUNK_SIZE;
+    const tGeo = this.buildTerrain(x0, z0);
     const tMesh = new THREE.Mesh(tGeo, this.materials.terrain);
     tMesh.receiveShadow = true;
     group.add(tMesh);
-
-    const sGeo = this.buildSkirt(x0);
-    geos.push(sGeo);
-    group.add(new THREE.Mesh(sGeo, this.materials.skirt));
-
-    const meshes = this.buildVegetation(index, x0);
+    const meshes = this.buildVegetation(i, j, x0, z0);
     for (const m of meshes) group.add(m);
-
-    // Static content: skip per-frame matrix recomputation.
     group.updateMatrixWorld(true);
     group.traverse((o) => (o.matrixAutoUpdate = false));
-
     return {
-      index,
+      i,
+      j,
       group,
       dispose: () => {
-        for (const g of geos) g.dispose();
-        for (const m of meshes) m.dispose();
+        tGeo.dispose();
+        for (const m of meshes) m.geometry.dispose();
       },
     };
   }
@@ -212,8 +198,11 @@ export class ChunkBuilder {
     const t = this.terrain;
     const n = t.colorNoise(x, z);
     out.copy(pal.grass).lerp(pal.dry, smoothstep(-0.15, 0.7, n));
-    if (z < -6) out.multiplyScalar(lerp(1, 0.82 + pal.frost * 0.15, smoothstep(-6, -30, z)));
     const az = Math.abs(z);
+    // Forest floor is darker away from the trail; mountain walls turn to scree and rock.
+    out.multiplyScalar(lerp(1, 0.86 + pal.frost * 0.12, smoothstep(8, 40, az) * (0.5 + 0.5 * n)));
+    const wall = smoothstep(78, 115, az);
+    if (wall > 0) out.lerp(pal.rock, wall * (0.6 - pal.frost * 0.4));
     const path = t.pathAmount(x) * (1 - smoothstep(0.7, 1.9, az + n * 0.4)) * (1 - pal.city);
     if (path > 0) out.lerp(pal.dirt, path);
     if (pal.city > 0) {
@@ -242,122 +231,72 @@ export class ChunkBuilder {
     return out;
   }
 
-  private buildTerrain(x0: number): THREE.BufferGeometry {
+  private buildTerrain(x0: number, z0: number): THREE.BufferGeometry {
     const t = this.terrain;
-    const cols = CHUNK_SIZE + 1;
-    const pals: Palette[] = [];
-    for (let i = 0; i < cols; i++) pals.push(this.palette(x0 + i));
-    const pos: number[] = [];
-    const nor: number[] = [];
-    const col: number[] = [];
-    const rowStart: number[] = [];
-    const rowCols: number[][] = [];
+    const n = CHUNK_SIZE / STEP + 1;
+    const pos = new Float32Array(n * n * 3);
+    const nor = new Float32Array(n * n * 3);
+    const col = new Float32Array(n * n * 3);
     const c = new THREE.Color();
-    const e = 0.5;
-    for (let j = 0; j < Z_ROWS.length; j++) {
-      const z = Z_ROWS[j];
-      const step = z < COARSE_Z ? 2 : 1;
-      rowStart.push(pos.length / 3);
-      const xs: number[] = [];
-      for (let i = 0; i < cols; i += step) xs.push(i);
-      if (xs[xs.length - 1] !== cols - 1) xs.push(cols - 1);
-      rowCols.push(xs);
-      for (const i of xs) {
-        const x = x0 + i;
+    const e = 0.6;
+    for (let a = 0; a < n; a++) {
+      const x = x0 + a * STEP;
+      const pal = this.palette(x);
+      for (let bb = 0; bb < n; bb++) {
+        const z = z0 + bb * STEP;
         const h = t.heightAt3(x, z);
-        pos.push(x, h, z);
+        const k = (bb * n + a) * 3;
+        pos[k] = x;
+        pos[k + 1] = h;
+        pos[k + 2] = z;
         const dx = (t.heightAt3(x + e, z) - t.heightAt3(x - e, z)) / (2 * e);
         const dz = (t.heightAt3(x, z + e) - t.heightAt3(x, z - e)) / (2 * e);
         const len = Math.hypot(dx, 1, dz);
-        nor.push(-dx / len, 1 / len, -dz / len);
-        this.terrainColor(x, z, h, 1 / len, pals[i], c);
-        col.push(c.r, c.g, c.b);
+        nor[k] = -dx / len;
+        nor[k + 1] = 1 / len;
+        nor[k + 2] = -dz / len;
+        this.terrainColor(x, z, h, 1 / len, pal, c);
+        col[k] = c.r;
+        col[k + 1] = c.g;
+        col[k + 2] = c.b;
       }
     }
-    // Stitch consecutive rows that may have different column counts.
     const idx: number[] = [];
-    for (let j = 0; j < Z_ROWS.length - 1; j++) {
-      const A = rowCols[j];
-      const B = rowCols[j + 1];
-      const a0 = rowStart[j];
-      const b0 = rowStart[j + 1];
-      let ia = 0;
-      let ib = 0;
-      while (ia < A.length - 1 || ib < B.length - 1) {
-        const nextA = ia < A.length - 1 ? A[ia + 1] : Infinity;
-        const nextB = ib < B.length - 1 ? B[ib + 1] : Infinity;
-        if (nextA <= nextB) {
-          idx.push(a0 + ia, a0 + ia + 1, b0 + ib);
-          ia++;
-        } else {
-          idx.push(a0 + ia, b0 + ib + 1, b0 + ib);
-          ib++;
-        }
+    for (let bb = 0; bb < n - 1; bb++) {
+      for (let a = 0; a < n - 1; a++) {
+        const p = bb * n + a;
+        idx.push(p, p + n, p + 1, p + 1, p + n, p + n + 1);
       }
     }
     const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
-    geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
     geo.setIndex(idx);
     geo.computeBoundingSphere();
     return geo;
   }
 
-  /** Cross-section of earth along the front edge, so the world reads as a diorama. */
-  private buildSkirt(x0: number): THREE.BufferGeometry {
-    const t = this.terrain;
-    const pos: number[] = [];
-    const col: number[] = [];
-    const idx: number[] = [];
-    const z = TERRAIN_Z_FRONT;
-    const strata = [0x4a3826, 0x3d2f22, 0x463a2e, 0x36302a, 0x2c2723];
-    const c = new THREE.Color();
-    const bands = 6;
-    for (let i = 0; i <= CHUNK_SIZE; i += 2) {
-      const x = x0 + i;
-      const top = t.heightAt3(x, z);
-      for (let b = 0; b <= bands; b++) {
-        const f = b / bands;
-        const y = top - f * f * SKIRT_DEPTH;
-        c.setHex(strata[Math.min(strata.length - 1, Math.floor(f * strata.length + t.colorNoise(x, b) * 0.6))]);
-        c.multiplyScalar(1 - f * 0.35);
-        pos.push(x, y, z);
-        col.push(c.r, c.g, c.b);
-      }
-    }
-    const per = bands + 1;
-    const n = CHUNK_SIZE / 2;
-    for (let i = 0; i < n; i++) {
-      for (let b = 0; b < bands; b++) {
-        const a = i * per + b;
-        idx.push(a, a + 1, a + per, a + 1, a + per + 1, a + per);
-      }
-    }
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-    geo.setIndex(idx);
-    geo.computeVertexNormals();
-    return geo;
-  }
-
   private blocked(x: number, z: number, big: boolean): boolean {
     for (const r of RIVERS) if (this.terrain.riverFactor(r, x, z) > (big ? 0.02 : 0.35)) return true;
+    const az = Math.abs(z);
+    // Keep the trail clear of trees, and authored sites readable.
+    if (big && az < 3.2) return true;
     for (const c of CLEARINGS) {
-      if (Math.abs(x - c.x) < c.radius && z > (big ? c.zBack : -5)) return true;
+      if (Math.abs(x - c.x) < c.radius && az < (big ? Math.abs(c.zBack) * 0.8 + 4 : 6)) return true;
     }
-    // City facades occupy the band behind the street.
-    if (inCityBlock(x) && z < -4 && z > -46) return true;
-    if (inCityBlock(x) && Math.abs(z) < 5.2) return true;
+    // City blocks: buildings line both sides of the street.
+    if (inCityBlock(x) && az < 48) return big || az < 5.2;
     // Nothing grows in the sea.
     if (regionWeight('coast', x) > 0.3 && this.terrain.heightAt3(x, z) < SEA_Y + 0.3) return true;
+    if (az > VALLEY_HALF + 6) return true;
+    if (big && this.terrain.gradientAt(x, z) > 1.1) return true;
     return false;
   }
 
-  private buildVegetation(index: number, x0: number): THREE.InstancedMesh[] {
+  private buildVegetation(ci: number, cj: number, x0: number, z0: number): THREE.Mesh[] {
     const t = this.terrain;
-    const rng = new Rng(hashSeed(t.seed, index, 7));
+    const rng = new Rng(hashSeed(t.seed, ci, cj, 7));
     const p = this.profile;
     const list: Placement[] = [];
     const add = (kind: VegKind, x: number, z: number, scale: number, sink = 0.05) => {
@@ -365,45 +304,45 @@ export class ChunkBuilder {
       list.push({ kind, variant: rng.int(0, variants - 1), x, y: t.heightAt3(x, z) - sink, z, scale, rot: rng.range(0, Math.PI * 2) });
     };
     const rx = () => x0 + rng.float() * CHUNK_SIZE;
+    const rz = () => z0 + rng.float() * CHUNK_SIZE;
 
     // Trees, behind the gameplay plane. Density varies along the trail: dense stands
     // alternate with open meadows where sky and distant ranges show through.
-    const nTrees = Math.round(250 * p.vegetationDensity);
+    const nTrees = Math.round(150 * p.vegetationDensity);
     for (let i = 0; i < nTrees; i++) {
       const x = rx();
+      const z = rz();
       const reg = regionAt(x);
-      const z = -3.3 - rng.float() * (Math.abs(TERRAIN_Z_BACK) - 6);
-      const density = (0.25 + 0.75 * t.forestDensity(x)) * reg.forest;
-      const depthKeep = z > -9 ? 0.3 : z > -18 ? 0.6 : 1;
-      if (!rng.chance(density * depthKeep)) continue;
+      const density = (0.25 + 0.75 * t.forestDensity(x + z * 0.7)) * reg.forest;
+      const nearTrail = Math.abs(z) < 9 ? 0.45 : 1;
+      if (!rng.chance(density * nearTrail)) continue;
       if (this.blocked(x, z, true)) continue;
       const kind = pickWeighted(rng, FLORA[reg.id].trees);
-      const scale = z > -9 ? rng.range(0.6, 0.85) : z > -18 ? rng.range(0.75, 1.1) : rng.range(0.8, 1.35);
-      add(kind, x, z, scale, 0.15);
+      add(kind, x, z, rng.range(0.75, 1.3), 0.15);
     }
     const nBush = Math.round(46 * p.vegetationDensity);
     for (let i = 0; i < nBush; i++) {
       const x = rx();
       const f = FLORA[regionAt(x).id];
       if (!rng.chance(f.bush)) continue;
-      const z = rng.range(-42, 30);
-      if (Math.abs(z) < 2.6 || this.blocked(x, z, false)) continue;
+      const z = rz();
+      if (Math.abs(z) < 2.2 || this.blocked(x, z, false)) continue;
       add('bush', x, z, rng.range(0.8, 1.4));
     }
     const nFern = Math.round(44 * p.vegetationDensity);
     for (let i = 0; i < nFern; i++) {
       const x = rx();
       if (!rng.chance(FLORA[regionAt(x).id].fern)) continue;
-      const z = rng.range(-26, 26);
+      const z = rz();
       if (Math.abs(z) < 1.7 || this.blocked(x, z, false)) continue;
       add('fern', x, z, rng.range(0.8, 1.3));
     }
-    const nGrass = Math.round(420 * p.grassDensity);
+    const nGrass = Math.round(360 * p.grassDensity);
     for (let i = 0; i < nGrass; i++) {
       const x = rx();
       const f = FLORA[regionAt(x).id];
       if (!rng.chance(f.grass)) continue;
-      const z = rng.range(-18, 36);
+      const z = rz();
       if (Math.abs(z) < 1.2 && t.pathAmount(x) > 0.4) continue;
       if (this.blocked(x, z, false)) continue;
       if (f.ground === 'drift') add('drift', x, z, rng.range(0.6, 1.2), 0.2);
@@ -412,53 +351,87 @@ export class ChunkBuilder {
     }
     for (let i = 0; i < 16; i++) {
       const x = rx();
-      const z = rng.range(-70, 34);
+      const z = rz();
       if (Math.abs(z) < 2.8 || this.blocked(x, z, false)) continue;
-      add('rock', x, z, rng.range(0.7, z > 0 ? 1.8 : 2.6), 0.25);
+      add('rock', x, z, rng.range(0.7, 2.4), 0.25);
     }
     for (let i = 0; i < 3; i++) {
       const x = rx();
-      const z = rng.chance(0.5) ? rng.range(-30, -4) : rng.range(4, 24);
-      if (this.blocked(x, z, false)) continue;
+      const z = rz();
+      if (Math.abs(z) < 3 || this.blocked(x, z, false)) continue;
       add(regionAt(x).id === 'city' ? 'scrap' : 'log', x, z, rng.range(0.9, 1.2), 0.15);
     }
     for (let i = 0; i < 5; i++) {
       const x = rx();
-      const z = rng.range(-40, 20);
+      const z = rz();
       if (Math.abs(z) < 2.5 || this.blocked(x, z, false)) continue;
       add('stump', x, z, rng.range(0.8, 1.2), 0.05);
     }
 
-    // Group into instanced meshes per (kind, variant).
-    const groups = new Map<string, Placement[]>();
+    // Merge everything sharing a material into one static mesh: a handful of draw calls per
+    // chunk instead of one per plant type. Small ground cover goes in its own mesh so it can be
+    // hidden at a distance.
+    type Acc = { pos: Float32Array; nor: Float32Array; col: Float32Array; h: Float32Array; ph: Float32Array; n: number; cast: boolean };
+    const accs = new Map<string, Acc>();
+    const sizes = new Map<string, number>();
+    const keyFor = (k: VegKind) => (k === 'grass' || k === 'flowers' || k === 'fern' || k === 'herb' || k === 'reeds' ? 'ground' : KIND_MATERIAL[k]);
     for (const pl of list) {
-      const key = `${pl.kind}:${pl.variant}`;
-      let g = groups.get(key);
-      if (!g) groups.set(key, (g = []));
-      g.push(pl);
+      const key = keyFor(pl.kind);
+      sizes.set(key, (sizes.get(key) ?? 0) + this.lib.variants[pl.kind][pl.variant].attributes.position.count);
     }
-    const out: THREE.InstancedMesh[] = [];
-    const m = new THREE.Matrix4();
-    const q = new THREE.Quaternion();
-    const s = new THREE.Vector3();
+    for (const [key, size] of sizes) accs.set(key, { pos: new Float32Array(size * 3), nor: new Float32Array(size * 3), col: new Float32Array(size * 3), h: new Float32Array(size), ph: new Float32Array(size), n: 0, cast: false });
     const v = new THREE.Vector3();
+    const m = new THREE.Matrix4();
+    const nm = new THREE.Matrix3();
+    const q = new THREE.Quaternion();
+    const sc = new THREE.Vector3();
     const up = new THREE.Vector3(0, 1, 0);
-    for (const [key, items] of groups) {
-      const [kind, vi] = key.split(':') as [VegKind, string];
-      const geo = this.lib.variants[kind][Number(vi)];
-      const mesh = new THREE.InstancedMesh(geo, this.materials[KIND_MATERIAL[kind]], items.length);
-      items.forEach((it, i) => {
-        q.setFromAxisAngle(up, it.rot);
-        const sc = clamp(it.scale, 0.3, 3);
-        s.set(sc, sc, sc);
-        v.set(it.x, it.y, it.z);
-        m.compose(v, q, s);
-        mesh.setMatrixAt(i, m);
-      });
-      mesh.instanceMatrix.needsUpdate = true;
-      mesh.castShadow = CASTS[kind];
-      mesh.receiveShadow = kind !== 'grass' && kind !== 'flowers';
-      mesh.computeBoundingSphere();
+    for (const pl of list) {
+      const geo = this.lib.variants[pl.kind][pl.variant];
+      const acc = accs.get(keyFor(pl.kind))!;
+      acc.cast ||= CASTS[pl.kind];
+      const s2 = clamp(pl.scale, 0.3, 3);
+      q.setFromAxisAngle(up, pl.rot);
+      m.compose(v.set(pl.x, pl.y, pl.z), q, sc.set(s2, s2, s2));
+      nm.getNormalMatrix(m);
+      const P = geo.attributes.position as THREE.BufferAttribute;
+      const N = geo.attributes.normal as THREE.BufferAttribute;
+      const C = geo.attributes.color as THREE.BufferAttribute;
+      const H = geo.attributes.aH as THREE.BufferAttribute;
+      const phase = pl.x * 0.37 + pl.z * 0.23;
+      for (let i = 0; i < P.count; i++) {
+        const o = acc.n * 3;
+        v.fromBufferAttribute(P, i).applyMatrix4(m);
+        acc.pos[o] = v.x;
+        acc.pos[o + 1] = v.y;
+        acc.pos[o + 2] = v.z;
+        v.fromBufferAttribute(N, i).applyMatrix3(nm).normalize();
+        acc.nor[o] = v.x;
+        acc.nor[o + 1] = v.y;
+        acc.nor[o + 2] = v.z;
+        acc.col[o] = C.getX(i);
+        acc.col[o + 1] = C.getY(i);
+        acc.col[o + 2] = C.getZ(i);
+        acc.h[acc.n] = H.getX(i) * s2;
+        acc.ph[acc.n] = phase;
+        acc.n++;
+      }
+    }
+    const out: THREE.Mesh[] = [];
+    for (const [key, acc] of accs) {
+      if (!acc.n) continue;
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(acc.pos, 3));
+      g.setAttribute('normal', new THREE.BufferAttribute(acc.nor, 3));
+      g.setAttribute('color', new THREE.BufferAttribute(acc.col, 3));
+      g.setAttribute('aH', new THREE.BufferAttribute(acc.h, 1));
+      g.setAttribute('aPhase', new THREE.BufferAttribute(acc.ph, 1));
+      g.computeBoundingSphere();
+      const mat = key === 'ground' ? this.materials.grass : this.materials[key as keyof ChunkMaterials];
+      const mesh = new THREE.Mesh(g, mat);
+      mesh.castShadow = acc.cast && key !== 'ground';
+      mesh.receiveShadow = key !== 'ground';
+      mesh.name = key;
       out.push(mesh);
     }
     return out;

@@ -3,7 +3,7 @@ import { Rng } from '../../core/rng';
 import { worldUvBox } from '../../render/textures';
 import { RIVERS } from '../WorldDef';
 import { buildCabin, CABIN_FLOOR, furniture } from './cabin';
-import { boulder, fixedLight, inspectable, lootCrate, mesh, oneway, readable, type SiteContext, signTexture, solid } from './kit';
+import { boulder, fixedLight, FULL_Z, inspectable, lootCrate, mesh, oneway, readable, type SiteContext, signTexture, solid } from './kit';
 
 /** Where the player wakes: a cold camp with J.'s note. */
 export function campsite(ctx: SiteContext, x: number): void {
@@ -117,7 +117,7 @@ export function logBridge(ctx: SiteContext): void {
     const br = mesh(new THREE.CylinderGeometry(0.05, 0.1, 1.4, 5), ctx.mats.woodDark, x0 + len * bx, cy + 0.5, -0.5, ctx.group);
     br.rotation.set(-0.6, 0, bx * 2);
   }
-  solid(ctx, x0, x1, cy - radius, cy + radius, 'wood', 'log-bridge');
+  solid(ctx, x0, x1, cy - radius, cy + radius, 'wood', 'log-bridge', -radius, radius);
 }
 
 /** Boulder ledges that let the player climb Eastridge's western cliff. */
@@ -134,9 +134,11 @@ export function ridgeLedges(ctx: SiteContext): void {
   steps.forEach(([x0, x1, f], i) => {
     const h = foot + rise * f;
     const base = Math.min(t.heightAt(x0), t.heightAt(x1)) - 0.6;
-    const geo = boulder(x1 - x0 + 0.2, h - base, 4.2 + i * 0.6, 3 + i);
-    mesh(geo, ctx.mats.rock, (x0 + x1) / 2, base, -0.4 - i * 0.3, ctx.group);
-    solid(ctx, x0, x1, base, h, 'rock');
+    const depth = 4.2 + i * 0.6;
+    const zc = -0.4 - i * 0.3;
+    const geo = boulder(x1 - x0 + 0.2, h - base, depth, 3 + i);
+    mesh(geo, ctx.mats.rock, (x0 + x1) / 2, base, zc, ctx.group);
+    solid(ctx, x0, x1, base, h, 'rock', undefined, zc - depth / 2, zc + depth / 2);
   });
   // Scree at the foot of the cliff, in front of the plane, to break up the slope face.
   const rng = new Rng(51);
@@ -171,7 +173,7 @@ export function rangerStation(ctx: SiteContext, x: number): void {
   furniture.paper(ctx, p, -3.6, CABIN_FLOOR + 2.24, -1.4, -0.4);
 
   // The crate by the ladder sits on the gameplay plane: a step up to the loft.
-  oneway(ctx, x - 1.9 - 0.42, x - 1.9 + 0.42, cab.floorY + 0.85, 'wood');
+  oneway(ctx, x - 1.9 - 0.42, x - 1.9 + 0.42, cab.floorY + 0.85, 'wood', undefined, -0.62, 0.22);
   readable(ctx, 'ranger-log', x + 0.2, cab.floorY + 1.0, "Ranger's log");
   inspectable(ctx, 'radio', x + 1.3, cab.floorY + 1.0, 'Field radio', 0.8);
   readable(ctx, 'j-note-2', x - 3.6, cab.floorY + 2.4, 'Note in the loft');
@@ -221,6 +223,7 @@ export function westBlockade(ctx: SiteContext, x: number): void {
   const g = ctx.terrain.heightAt(x);
   const rng = new Rng(99);
   const pile = new THREE.Group();
+  pile.userData.dynamic = true;
   ctx.group.add(pile);
   for (let i = 0; i < 26; i++) {
     const s = rng.range(1.2, 3.4);
@@ -232,7 +235,8 @@ export function westBlockade(ctx: SiteContext, x: number): void {
     m.rotation.set(rng.float() * 3, rng.float() * 3, rng.float() * 3);
     m.scale.y = rng.range(0.6, 1);
   }
-  const wall = solid(ctx, x - 6, x + 3.5, g - 6, g + 14, 'rock', 'blockade:west');
+  // Fills the notch in the border ridge: the only way into the Frostlands.
+  const wall = solid(ctx, x - 6, x + 3.5, g - 6, g + 16, 'rock', 'blockade:west', -20, 20);
   let progress = 0;
   const it = {
     id: 'rockslide',
@@ -320,11 +324,13 @@ export function eastBlockade(ctx: SiteContext, x0: number, x1: number): void {
   const deck = mesh(worldUvBox(7, 0.7, 7, 2), ctx.mats.concrete, x1 + 5, deckY - 0.6, 0, ctx.group);
   deck.rotation.z = -0.35;
   for (let i = 0; i < 6; i++) mesh(new THREE.DodecahedronGeometry(0.4 + (i % 3) * 0.2, 0), ctx.mats.concrete, x1 + 2 + i * 0.9, deckY - 1.4 - i * 0.2, -1 + (i % 2) * 1.5, ctx.group);
-  solid(ctx, x1, x1 + 14, by - 6, by + 14, 'rock', 'gorge');
+  // The gorge cuts the whole map; a guard rail of rock keeps you out of it.
+  solid(ctx, x1, x1 + 14, by - 30, by + 14, 'rock', 'gorge', FULL_Z[0], FULL_Z[1]);
   readable(ctx, 'bridge-sign', bx - 2.5, by + 1.4, 'Notice', 'Read', 1);
   const far = x1 + 17;
   const farY = t.heightAt(far);
   const rope = new THREE.Group();
+  rope.userData.dynamic = true;
   rope.visible = false;
   ctx.group.add(rope);
   const rl = Math.hypot(far - bx, farY - by);
@@ -368,7 +374,9 @@ export function cliffLedges(ctx: SiteContext, foot: number): void {
   steps.forEach(([x0, x1, f], i) => {
     const h = g0 + rise * f;
     const base = Math.min(t.heightAt(x0), t.heightAt(x1)) - 0.6;
-    mesh(boulder(x1 - x0 + 0.2, h - base, 4.2 + i * 0.6, 7 + i), ctx.mats.rock, (x0 + x1) / 2, base, -0.4 - i * 0.3, ctx.group);
-    solid(ctx, x0, x1, base, h, 'rock');
+    const depth = 4.2 + i * 0.6;
+    const zc = -0.4 - i * 0.3;
+    mesh(boulder(x1 - x0 + 0.2, h - base, depth, 7 + i), ctx.mats.rock, (x0 + x1) / 2, base, zc, ctx.group);
+    solid(ctx, x0, x1, base, h, 'rock', undefined, zc - depth / 2, zc + depth / 2);
   });
 }

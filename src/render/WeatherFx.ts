@@ -87,7 +87,7 @@ export class WeatherFx {
       uniforms: {
         uTime: sharedUniforms.uTime,
         uCenter: { value: new THREE.Vector3() },
-        uBox: { value: new THREE.Vector3(50, 30, 40) },
+        uBox: { value: new THREE.Vector3(36, 26, 36) },
         uWind: { value: 0.3 },
         uOpacity: { value: 0.35 },
         uColor: { value: new THREE.Color(0xc6d2dc) },
@@ -110,7 +110,7 @@ export class WeatherFx {
       uniforms: {
         uTime: sharedUniforms.uTime,
         uCenter: { value: new THREE.Vector3() },
-        uBox: { value: new THREE.Vector3(50, 30, 40) },
+        uBox: { value: new THREE.Vector3(36, 26, 36) },
         uWind: { value: 0.3 },
         uOpacity: { value: 0.9 },
         uPixelRatio: { value: 1 },
@@ -132,11 +132,11 @@ export class WeatherFx {
     this.rain.geometry.setDrawRange(0, rc * 2);
     this.snow.geometry.setDrawRange(0, sc);
     for (const m of [this.rainMat, this.snowMat]) {
-      m.uniforms.uCenter.value.set(center.x, center.y + 4, -6);
+      m.uniforms.uCenter.value.set(center.x, center.y + 4, center.z);
       m.uniforms.uWind.value = wind;
     }
     this.snowMat.uniforms.uPixelRatio.value = pixelRatio;
-    this.snowMat.uniforms.uScale.value = 18 / viewHeight;
+    this.snowMat.uniforms.uScale.value = 1.1 + 0 * viewHeight;
     this.rainMat.uniforms.uOpacity.value = 0.25 + rain * 0.2;
   }
 }

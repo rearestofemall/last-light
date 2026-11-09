@@ -66,6 +66,11 @@ function finish(parts: THREE.BufferGeometry[]): THREE.BufferGeometry {
   const g = mergeGeometries(parts, false)!;
   g.computeVertexNormals();
   g.computeBoundingSphere();
+  // Height above the plant's base: drives wind sway (also once merged into world space).
+  const pos = g.attributes.position as THREE.BufferAttribute;
+  const h = new Float32Array(pos.count);
+  for (let i = 0; i < pos.count; i++) h[i] = Math.max(0, pos.getY(i));
+  g.setAttribute('aH', new THREE.BufferAttribute(h, 1));
   return g;
 }
 

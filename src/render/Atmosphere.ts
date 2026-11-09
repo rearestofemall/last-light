@@ -158,8 +158,9 @@ export function computeAtmosphere(i: AtmosphereInput, out: Atmosphere): Atmosphe
   out.sunScreen.set(0.06 + dayFrac * 0.88, 0.42 + Math.max(-0.2, e) * 0.5);
   const nightFrac = (((i.hour - 18 + 24) % 24) / 12);
   out.moonScreen.set(0.1 + clamp(nightFrac, 0, 1) * 0.8, 0.42 + Math.max(0, Math.sin(nightFrac * Math.PI)) * 0.4);
-  const dirX = e > -0.05 ? (0.5 - dayFrac) * -1.6 : (0.5 - clamp(nightFrac, 0, 1)) * -1.2;
-  out.sunDir.set(dirX, Math.max(0.3, Math.abs(e) + 0.15), 0.55).normalize();
+  // East (+x, the coast) at dawn, west (the Frostlands) at dusk; the moon follows at night.
+  const arc = e > -0.05 ? dayFrac : clamp(nightFrac, 0, 1);
+  out.sunDir.set(Math.cos(arc * Math.PI) * 0.9, Math.max(0.25, Math.abs(e) + 0.12), 0.45).normalize();
   out.stars = nightK * (1 - i.cloud * 0.85);
 
   // Weather: overcast desaturates and dims, fog pulls the far plane in.

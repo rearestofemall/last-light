@@ -122,7 +122,7 @@ export class PlayerActions {
     this.model.swing();
     this.events.emit('sfx', { name: 'swing' });
     const b = this.player.body;
-    const hit = this.wildlife.strike(b.x, b.y, this.player.facing, 1.9, damage);
+    const hit = this.wildlife.strike(b.x, b.y, b.z, this.player.facingX, this.player.facingZ, 2.1, damage);
     if (hit) {
       this.events.emit('sfx', { name: 'hit', x: b.x });
       if (tool) this.wearTool(tool);

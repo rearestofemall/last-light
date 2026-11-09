@@ -5,6 +5,8 @@ export interface Interactable {
   id: string;
   x: number;
   y: number;
+  /** Depth position. When omitted, the object sits on the road band (|z| ≤ 4.5) and only x counts. */
+  z?: number;
   /** Horizontal reach. */
   radius: number;
   /** Prompt verb, e.g. "Read", "Examine". */
@@ -17,7 +19,7 @@ export interface Interactable {
   onAlt?: () => void;
   enabled?: () => boolean;
   /** Custom range test (e.g. rivers you can reach from the bank or while swimming). */
-  inRange?: (px: number, py: number) => boolean;
+  inRange?: (px: number, py: number, pz: number) => boolean;
   /** Higher wins ties when several are in reach. */
   priority?: number;
   onInteract(): void;
@@ -51,21 +53,32 @@ export class InteractionSystem {
     return this.current;
   }
 
-  private test(it: Interactable, px: number, py: number): number {
-    if (it.enabled && !it.enabled()) return Infinity;
-    if (it.inRange) return it.inRange(px, py) ? 0.5 - (it.priority ?? 0) : Infinity;
+  private test(it: Interactable, px: number, py: number, pz: number): number {
+    if (it.inRange) {
+      if (it.enabled && !it.enabled()) return Infinity;
+      return it.inRange(px, py, pz) ? 0.5 - (it.priority ?? 0) : Infinity;
+    }
     const dx = Math.abs(it.x - px);
+    if (dx > it.radius + 0.5) return Infinity;
+    let d: number;
+    if (it.z === undefined) {
+      if (Math.abs(pz) > 4.5) return Infinity;
+      d = dx;
+    } else {
+      d = Math.hypot(dx, it.z - pz);
+    }
     const dy = it.y - (py + 0.9);
-    if (dx > it.radius || Math.abs(dy) > 1.3) return Infinity;
-    return dx + Math.abs(dy) * 0.5 - (it.priority ?? 0);
+    if (d > it.radius || Math.abs(dy) > 1.3) return Infinity;
+    if (it.enabled && !it.enabled()) return Infinity;
+    return d + Math.abs(dy) * 0.5 - (it.priority ?? 0);
   }
 
-  update(px: number, py: number, input: Input, enabled: boolean): void {
+  update(px: number, py: number, pz: number, input: Input, enabled: boolean): void {
     let best: Interactable | null = null;
     let bestD = Infinity;
     if (enabled) {
       for (const it of this.items) {
-        const d = this.test(it, px, py);
+        const d = this.test(it, px, py, pz);
         if (d < bestD) {
           bestD = d;
           best = it;
@@ -96,7 +109,7 @@ export class InteractionSystem {
     const key = `${text}|${alt ?? ''}|${i.x}|${i.y}`;
     if (key === this.lastText) return;
     this.lastText = key;
-    this.events.emit('interact:prompt', { text, alt: alt ?? undefined, key: 'E', worldX: i.x, worldY: i.y });
+    this.events.emit('interact:prompt', { text, alt: alt ?? undefined, key: 'E', worldX: i.x, worldY: i.y, worldZ: i.z ?? 0 });
   }
 
   private setCurrent(i: Interactable | null): void {

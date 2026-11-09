@@ -62,7 +62,8 @@ export class Session implements BackpackHost {
   readonly wildlife: Wildlife;
   readonly build: BuildSystem;
   ui!: UIManager;
-  respawn = { x: SPAWN_X, y: 0 };
+  respawn = { x: SPAWN_X, y: 0, z: 0 };
+  private poiTimer = 1;
   playTime = 0;
   /** True during fades/cutscenes: simulation pauses. */
   busy = false;
@@ -85,7 +86,6 @@ export class Session implements BackpackHost {
   };
   private mouseWorld = new THREE.Vector3();
   private raycaster = new THREE.Raycaster();
-  private plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
   private hotbarDirty = true;
   /** Cached per-tick context, reused for the HUD. */
   tempC = 14;
@@ -143,14 +143,16 @@ export class Session implements BackpackHost {
         openCrafting: () => this.ui.backpack.open('craft'),
       },
     });
-    this.player = new PlayerController(this.world.collision, events, SPAWN_X, 0);
+    this.player = new PlayerController(this.world.collision, events, SPAWN_X, 0, 1.5);
+    this.rig.ground = (x, z) => (this.isUnderground() ? -1e9 : this.world.terrain.heightAt3(x, z));
     this.wildlife = new Wildlife(this.world.collision, {
       events,
       interactions: this.interactions,
       playerX: () => this.player.body.x,
       playerY: () => this.player.body.y,
-      lightAt: (x, y) => this.lights.lightAt(x, y),
-      darkness: () => (this.world.collision.isUnderground(this.player.body.x, this.player.body.y) ? 1 : 1 - this.clock.daylight),
+      playerZ: () => this.player.body.z,
+      lightAt: (x, y, z) => this.lights.lightAt(x, y, z),
+      darkness: () => (this.isUnderground() ? 1 : 1 - this.clock.daylight),
       damagePlayer: (a, c) => this.survival.damage(a, c),
       giveLoot: (id, q) => {
         const left = this.inventory.add(id, q);
@@ -158,7 +160,7 @@ export class Session implements BackpackHost {
         return q - left;
       },
       hasKnife: () => this.actions.tool('knife') !== null,
-      isUnderground: (x, y) => this.world.collision.isUnderground(x, y),
+      isUnderground: (x, z, y) => this.world.collision.isUnderground(x, z, y),
     });
     scene.add(this.wildlife.group);
     this.actions = new PlayerActions(this.inventory, this.player, this.model, this.survival, this.lights, this.wildlife, events);
@@ -195,11 +197,9 @@ export class Session implements BackpackHost {
   stations(): Set<Station> {
     const s = new Set<Station>();
     const b = this.player.body;
-    if (this.lights.nearestLit(b.x, b.y + 0.5, ['campfire', 'barrel'], 3.5)) s.add('fire');
-    for (const p of this.build.pieces) {
-      if (p.piece === 'workbench' && Math.abs(p.cell * 2 + 1 - b.x) < 3 && Math.abs(p.base + p.level * 3 - b.y) < 2) s.add('workbench');
-    }
-    for (const st of this.world.stations) if (Math.abs(st.x - b.x) < 3.5 && Math.abs(st.y - b.y) < 2) s.add('workbench');
+    if (this.lights.nearestLit(b.x, b.y + 0.5, b.z, ['campfire', 'barrel'], 3.5)) s.add('fire');
+    if (this.build.workbenchNear(b.x, b.y, b.z)) s.add('workbench');
+    for (const st of this.world.stations) if (Math.abs(st.x - b.x) < 3.5 && Math.abs(st.y - b.y) < 2 && Math.abs(b.z) < 5) s.add('workbench');
     return s;
   }
 
@@ -266,22 +266,22 @@ export class Session implements BackpackHost {
   }
 
   isUnderground(): boolean {
-    return this.world.collision.isUnderground(this.player.body.x, this.player.body.y);
+    return this.world.collision.isUnderground(this.player.body.x, this.player.body.z, this.player.body.y);
   }
 
-  async travel(x: number, y: number, label = ''): Promise<void> {
+  async travel(x: number, y: number, label = '', z = 0): Promise<void> {
     if (this.busy) return;
     this.busy = true;
     await this.ui.fader.run(label, () => {
-      this.player.placeAt(x, y);
-      this.rig.snapTo(x, this.player.body.y);
-      this.world.preload(x);
+      this.player.placeAt(x, y, z);
+      this.rig.snapTo(x, this.player.body.y, z);
+      this.world.preload(x, z);
     }, label ? 900 : 250);
     this.busy = false;
     this.input.flush();
   }
 
-  async sleep(quality: number, at: { x: number; y: number }): Promise<void> {
+  async sleep(quality: number, at: { x: number; y: number; z?: number }): Promise<void> {
     if (this.busy) return;
     const s = this.survival;
     const hour = this.clock.hour;
@@ -291,13 +291,13 @@ export class Session implements BackpackHost {
       return;
     }
     const b = this.player.body;
-    if (this.lights.lightAt(b.x, b.y) < 0.3 && this.clock.isNight && regionAt(b.x).id !== 'city' && !this.world.insideInterior(b.x, b.y) && this.build.shelterAt(b.x, b.y) < 2) {
+    if (this.lights.lightAt(b.x, b.y + 1, b.z) < 0.3 && this.clock.isNight && !this.world.insideInterior(b.x, b.y, b.z) && this.build.shelterAt(b.x, b.y, b.z) < 2) {
       this.events.emit('toast', { text: 'Sleeping in the open dark is asking for wolves. Light a fire first.', kind: 'warn', duration: 4 });
       return;
     }
     this.busy = true;
     const hours = night ? this.clock.hoursUntilMorning() : 3;
-    this.respawn = { x: at.x, y: at.y };
+    this.respawn = { x: at.x, y: at.y, z: at.z ?? 0 };
     const day0 = this.clock.day;
     await this.ui.fader.run(night ? `Day ${day0 + (hour >= 19 ? 1 : 0)}` : 'You rest for a few hours', () => {
       this.clock.advanceHours(hours);
@@ -332,9 +332,9 @@ export class Session implements BackpackHost {
       s.sickness = 0;
       this.clock.advanceHours(5);
       this.wildlife.clear();
-      this.player.placeAt(this.respawn.x, this.respawn.y);
-      this.rig.snapTo(this.player.body.x, this.player.body.y);
-      this.world.preload(this.player.body.x);
+      this.player.placeAt(this.respawn.x, this.respawn.y, this.respawn.z);
+      this.rig.snapTo(this.player.body.x, this.player.body.y, this.player.body.z);
+      this.world.preload(this.player.body.x, this.player.body.z);
     }, 600);
     this.busy = false;
     this.input.flush();
@@ -356,9 +356,9 @@ export class Session implements BackpackHost {
       this.weather.set('clear');
       const x = -786;
       this.player.placeAt(x);
-      this.respawn = { x, y: this.player.body.y };
+      this.respawn = { x, y: this.player.body.y, z: 0 };
       this.rig.snapTo(x, this.player.body.y);
-      this.world.preload(x);
+      this.world.preload(x, 0);
     }, 400, true);
     this.busy = false;
     this.input.flush();
@@ -376,14 +376,15 @@ export class Session implements BackpackHost {
     this.wildlife.clear();
     this.clock.time = 1 + 8 / 24;
     this.weather.deserialize({ state: 'clear', timer: 400 });
-    this.respawn = { x: SPAWN_X, y: 0 };
+    this.respawn = { x: SPAWN_X, y: 0, z: 0 };
     this.playTime = 0;
     // Fresh containers and node states: the registry keeps site crates, so reset them.
     this.resetContainers();
     this.world.resources.deserialize({});
     this.restoreLights({});
-    this.player.placeAt(SPAWN_X);
-    this.player.facing = 1;
+    this.player.placeAt(SPAWN_X, undefined, 1.5);
+    this.player.heading = Math.PI / 2;
+    this.rig.yaw = -Math.PI / 2 + 0.35;
     this.respawn.y = this.player.body.y;
     this.locationId = null;
     this.regionId = null;
@@ -429,7 +430,7 @@ export class Session implements BackpackHost {
       version: SAVE_VERSION,
       savedAt: Date.now(),
       playTime: this.playTime,
-      player: { x: b.x, y: b.y, facing: this.player.facing },
+      player: { x: b.x, y: b.y, z: b.z, heading: this.player.heading },
       respawn: { ...this.respawn },
       world: { seed: WORLD_SEED, time: this.clock.time, weather: this.weather.serialize() },
       survival: this.survival.serialize(),
@@ -463,8 +464,9 @@ export class Session implements BackpackHost {
     this.restoreLights(d.lights);
     this.playTime = d.playTime;
     this.respawn = { ...d.respawn };
-    this.player.placeAt(d.player.x, d.player.y);
-    this.player.facing = d.player.facing;
+    this.player.placeAt(d.player.x, d.player.y, d.player.z);
+    this.player.heading = d.player.heading;
+    this.rig.yaw = d.player.heading + Math.PI;
     this.world.applyGates();
     this.quests.update(false);
     this.hotbarDirty = true;
@@ -499,7 +501,7 @@ export class Session implements BackpackHost {
       if (ui.map.visible) ui.map.close();
       else if (!ui.modalOpen) {
         const q = this.quests.current;
-        ui.map.open(this.story, this.player.body.x, q ? { text: q.text, x: q.target } : null);
+        ui.map.open(this.story, { x: this.player.body.x, z: this.player.body.z, heading: this.player.heading }, q ? { text: q.text, x: q.target } : null);
       }
       return true;
     }
@@ -540,8 +542,9 @@ export class Session implements BackpackHost {
         this.build.removeMode = false;
       }
       if (inp.consume('remove') || inp.consume('rclick')) this.build.removeMode = !this.build.removeMode;
+      if (inp.consume('alt')) this.build.rotate();
       const w = this.mouseToWorld();
-      if (w) this.build.updateCursor(w.x, w.y);
+      this.build.updateCursor(w);
       if (inp.consume('click')) {
         if (this.build.removeMode) this.build.demolish();
         else this.build.confirm();
@@ -552,18 +555,18 @@ export class Session implements BackpackHost {
     // Player movement and actions
     this.survival.modifiers(this.player.modifiers);
     this.player.update(dt, inp);
-    this.shelter = underground || this.world.insideInterior(b.x, b.y) ? 2 : this.build.shelterAt(b.x, b.y);
+    this.shelter = underground || this.world.insideInterior(b.x, b.y, b.z) ? 2 : this.build.shelterAt(b.x, b.y, b.z);
     const precip = this.shelter > 0 ? 0 : this.weather.precipitation;
     if (!this.build.active) this.actions.update(dt, inp, precip, this.shelter > 0);
     else this.actions.update(dt, inp, precip, this.shelter > 0);
     this.model.holdingLight = this.actions.lightRadius > 0;
-    this.interactions.update(b.x, b.y, inp, true);
+    this.interactions.update(b.x, b.y, b.z, inp, !this.build.active);
 
     // World simulation
     this.clock.update(dt);
     this.weather.setContext(regionAt(b.x).id, this.clock.season === 'Winter');
     this.weather.update(dt);
-    this.lights.update(dt, b.x, b.y, this.weather.precipitation * (this.weather.rain > this.weather.snow ? 1 : 0.4), this.weather.wind);
+    this.lights.update(dt, b.x, b.y, b.z, this.weather.precipitation * (this.weather.rain > this.weather.snow ? 1 : 0.4), this.weather.wind);
     this.wildlife.update(dt);
     this.resourceTimer -= dt;
     if (this.resourceTimer <= 0) {
@@ -579,7 +582,7 @@ export class Session implements BackpackHost {
       moving: Math.abs(b.vx) > 0.5,
       swimming: this.player.state === 'swim',
       ambientC: this.tempC,
-      fireHeat: this.lights.heatAt(b.x, b.y + 0.8),
+      fireHeat: this.lights.heatAt(b.x, b.y + 0.8, b.z),
       shelter: this.shelter,
       clothing: this.actions.warmthBonus,
       precipitation: precip,
@@ -587,8 +590,17 @@ export class Session implements BackpackHost {
     });
 
     // Story
-    this.story.explore(b.x);
+    this.story.explore(b.x, b.z);
     this.trackLocation();
+    this.poiTimer -= dt;
+    if (this.poiTimer <= 0) {
+      this.poiTimer = 1;
+      const poi = this.world.poiNear(b.x, b.z, 16);
+      if (poi && this.story.discover(poi.id)) {
+        this.events.emit('sfx', { name: 'discover' });
+        this.ui.hud.showBanner(regionAt(poi.x).name, poi.name);
+      }
+    }
     this.quests.update();
     this.tutorial.update(dt, this.player, this.clock, this.inventory);
     this.playTime += dt;
@@ -596,21 +608,43 @@ export class Session implements BackpackHost {
     if (this.survival.dead) void this.handleDeath();
     if (b.y < -300) {
       // Safety net: fell out of the world.
-      this.player.placeAt(this.respawn.x, this.respawn.y);
+      this.player.placeAt(this.respawn.x, this.respawn.y, this.respawn.z);
     }
   }
 
+  /** Where the crosshair points: structures first, then terrain (ray-marched), within reach. */
   private mouseToWorld(): THREE.Vector3 | null {
     const cam = this.rig.camera;
-    const ndc = new THREE.Vector2((this.input.mouseX / window.innerWidth) * 2 - 1, -(this.input.mouseY / window.innerHeight) * 2 + 1);
-    this.raycaster.setFromCamera(ndc, cam);
-    return this.raycaster.ray.intersectPlane(this.plane, this.mouseWorld);
+    this.raycaster.setFromCamera(new THREE.Vector2(0, 0), cam);
+    const ray = this.raycaster.ray;
+    const b = this.player.body;
+    this.raycaster.far = 40;
+    const hits = this.raycaster.intersectObject(this.build.group, true).filter((h) => !(h.object as THREE.Mesh).userData.ghost);
+    let best: THREE.Vector3 | null = null;
+    for (const h of hits) {
+      if (h.point.distanceTo(new THREE.Vector3(b.x, b.y + 1, b.z)) < 12) {
+        best = h.point.clone().add(h.face ? h.face.normal.clone().transformDirection(h.object.matrixWorld).multiplyScalar(0.3) : new THREE.Vector3());
+        break;
+      }
+    }
+    if (best) return this.mouseWorld.copy(best);
+    const t = this.world.terrain;
+    const p = new THREE.Vector3();
+    for (let d = 0.5; d < 40; d += 0.25) {
+      ray.at(d, p);
+      if (p.y <= t.heightAt3(p.x, p.z)) {
+        if (Math.hypot(p.x - b.x, p.z - b.z) > 12) return null;
+        return this.mouseWorld.copy(p);
+      }
+    }
+    return null;
   }
 
   private trackLocation(force = false): void {
     const x = this.player.body.x;
     const region = regionAt(x);
-    const loc = locationAt(x);
+    // Named places line the road; out in the wilds you're simply in the region.
+    const loc = Math.abs(this.player.body.z) < 45 || this.isUnderground() ? locationAt(x) : null;
     const regionChanged = region.id !== this.regionId;
     if (!force && !regionChanged && (loc?.id ?? null) === this.locationId) return;
     if (loc && loc.id !== this.locationId) {
@@ -630,9 +664,9 @@ export class Session implements BackpackHost {
 
   // ------------------------------------------------------------ per frame
   /** Inputs for the renderer's environment (sky, light, weather FX). */
-  environment(focusX: number, focusY: number): EnvironmentInput {
+  environment(focusX: number, focusY: number, focusZ: number): EnvironmentInput {
     const e = this.envInput;
-    const underground = this.world.collision.isUnderground(focusX, focusY - 2.6);
+    const underground = this.world.collision.isUnderground(focusX, focusZ, focusY - 1.6);
     e.hour = this.clock.hour;
     e.sunElevation = this.clock.sunElevation;
     e.cloud = this.weather.cloud;
@@ -653,7 +687,7 @@ export class Session implements BackpackHost {
 
   hudFrame(darkness: number): HudFrame {
     const b = this.player.body;
-    const light = this.lights.lightAt(b.x, b.y + 1);
+    const light = this.lights.lightAt(b.x, b.y + 1, b.z);
     this.gloom = darkness * (1 - Math.min(1, light * 0.9)) * 0.85;
     const q = this.quests.current;
     return {

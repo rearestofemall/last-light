@@ -18,7 +18,7 @@ export function tunnel(ctx: SiteContext, x0: number, x1: number, style: TunnelSt
   const y = UG_Y;
   const H = style === 'cave' ? 5 : 4.4;
   const zb = -4.5;
-  const zf = 3;
+  const zf = 4.5;
   const D = zf - zb;
   const zc = (zb + zf) / 2;
   const L = x1 - x0;
@@ -26,15 +26,22 @@ export function tunnel(ctx: SiteContext, x0: number, x1: number, style: TunnelSt
   const m = ctx.mats;
   const wallMat = style === 'metro' ? m.tile : style === 'lab' ? m.white : m.rock;
   const floorMat = style === 'cave' ? m.rock : m.concrete;
-  mesh(worldUvBox(L + 2, 1, D + 2, 2), floorMat, cx, y - 0.5, zc, g);
-  mesh(worldUvBox(L + 2, 1, D + 2, 2), style === 'cave' ? m.rock : m.concrete, cx, y + H + 0.5, zc, g);
-  mesh(worldUvBox(L + 2, H, 0.4, style === 'metro' ? 1 : 2), wallMat, cx, y + H / 2, zb, g);
-  for (const ex of [x0 - 0.5, x1 + 0.5]) mesh(worldUvBox(1, H + 1, D + 2, 2), style === 'cave' ? m.rock : m.concrete, ex, y + H / 2, zc, g);
-  solid(ctx, x0 - 1, x1 + 1, y - 3, y, style === 'cave' ? 'rock' : 'rock');
-  solid(ctx, x0 - 1, x1 + 1, y + H, y + H + 2, 'rock', 'roof');
-  solid(ctx, x0 - 3, x0, y - 3, y + H + 2, 'rock');
-  solid(ctx, x1, x1 + 3, y - 3, y + H + 2, 'rock');
-  ctx.interiors.push({ x0, x1, y0: y - 1, y1: y + H });
+  // An inward-facing shell: from any camera angle the near walls are culled and
+  // the interior shows, like a cut-away, while the far walls enclose the space.
+  const shellMat = (wallMat as THREE.MeshStandardMaterial).clone();
+  shellMat.side = THREE.BackSide;
+  const shell = new THREE.Mesh(worldUvBox(L, H, D, style === 'metro' ? 1 : 2), shellMat);
+  shell.position.set(cx, y + H / 2, zc);
+  shell.receiveShadow = true;
+  g.add(shell);
+  mesh(worldUvBox(L, 0.2, D, 2), floorMat, cx, y - 0.1, zc, g, false);
+  solid(ctx, x0 - 1, x1 + 1, y - 3, y, 'rock', undefined, zb - 1, zf + 1);
+  solid(ctx, x0 - 1, x1 + 1, y + H, y + H + 2, 'rock', 'roof', zb - 1, zf + 1);
+  solid(ctx, x0 - 3, x0, y - 3, y + H + 2, 'rock', undefined, zb - 1, zf + 1);
+  solid(ctx, x1, x1 + 3, y - 3, y + H + 2, 'rock', undefined, zb - 1, zf + 1);
+  solid(ctx, x0 - 1, x1 + 1, y - 3, y + H + 2, 'rock', undefined, zb - 2, zb);
+  solid(ctx, x0 - 1, x1 + 1, y - 3, y + H + 2, 'rock', undefined, zf, zf + 2);
+  ctx.interiors.push({ x0, x1, y0: y - 1, y1: y + H, z0: zb, z1: zf });
   const rng = new Rng(Math.floor(x0 * 13));
   if (style === 'metro') {
     // Platform edge, rails, pillars, dead signage.

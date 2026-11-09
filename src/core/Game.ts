@@ -51,6 +51,7 @@ export class Game implements GameApi {
   ) {
     this.loading = new LoadingScreen(uiRoot);
     this.renderer = new Renderer(canvas, this.settings);
+    this.input.attachCanvas(canvas);
     this.renderer.addResizeListener(() => this.rig.setAspect(this.renderer.aspect));
     this.rig.setAspect(this.renderer.aspect);
     this.rig.bounds = { min: PLAYABLE.min, max: PLAYABLE.max };
@@ -90,7 +91,7 @@ export class Game implements GameApi {
     await nextFrame();
     await nextFrame();
     this.session = new Session(scene, this.settings, this.events, this.input, this.rig);
-    this.ui = new UIManager(this.uiRoot, this.events, this, this.session, () => this.session.world.terrain, this.loading);
+    this.ui = new UIManager(this.uiRoot, this.events, this, this.session, () => this.session.world.terrain, this.loading, () => this.session.world.pois);
     this.session.attachUI(this.ui);
     this.session.captureInitialState();
     this.session.tutorial.enabled = this.settings.get().showHints;
@@ -106,8 +107,8 @@ export class Game implements GameApi {
     progress(0.55, 'Kindling…');
     await nextFrame();
     this.session.newGame();
-    this.rig.snapTo(SPAWN_X + 10, this.session.player.body.y + 1);
-    this.session.world.preload(this.rig.focus.x);
+    this.rig.snapTo(SPAWN_X + 10, this.session.player.body.y + 1, 0);
+    this.session.world.preload(this.rig.focus.x, this.rig.focus.z);
 
     progress(0.85, 'Warming up…');
     await nextFrame();
@@ -212,9 +213,10 @@ export class Game implements GameApi {
     this.input.reset();
     this.autosaveTimer = AUTOSAVE_INTERVAL;
     const b = this.session.player.body;
-    this.rig.snapTo(b.x, b.y);
-    this.session.world.preload(this.rig.focus.x);
+    this.rig.snapTo(b.x, b.y, b.z);
+    this.session.world.preload(b.x, b.z);
     this.session.begin();
+    this.input.requestLock();
   }
 
   // ---------------------------------------------------------------- Loop
@@ -253,24 +255,32 @@ export class Game implements GameApi {
     const s = this.session;
     const simRunning = this.state === 'playing' && !this.ui.modalOpen && !s.busy;
     s.frame(dt, simRunning ? alpha : 1, this.state === 'paused');
+    // Mouse look is captured while playing; menus free the cursor.
+    this.input.wantLock = this.state === 'playing' && !this.ui.modalOpen && !s.busy;
+    if (!this.input.wantLock && this.input.locked) this.input.releaseLock();
+    this.ui.hud.setCrosshair(this.state === 'playing' && !this.ui.modalOpen);
     if (this.state === 'menu') {
       this.menuTime += dt;
       s.clock.update(dt * 0.2);
-      const x = 22 + 24 * Math.sin(this.menuTime * 0.045 - 0.4);
-      this.rig.pan(dt, x, s.world.terrain.heightAt(x) + 3.2);
+      const x = 18 + 20 * Math.sin(this.menuTime * 0.04 - 0.4);
+      this.rig.pan(dt, x, s.world.terrain.heightAt(x) + 3.5, 0);
       this.input.wheelDelta = 0;
+      this.input.lookDX = this.input.lookDY = 0;
     } else if (this.state === 'playing') {
       if (this.input.wheelDelta !== 0 && !this.input.held('sprint')) {
         this.rig.zoom(this.input.wheelDelta);
         this.input.wheelDelta = 0;
       }
+      if (simRunning) this.rig.look(this.input.lookDX, this.input.lookDY);
+      this.input.lookDX = this.input.lookDY = 0;
+      s.player.cameraYaw = this.rig.yaw;
       const p = s.model.root.position;
-      this.rig.follow(dt, p.x, p.y, s.player.body.vx);
+      this.rig.follow(dt, p.x, p.y, p.z);
     }
     const p = s.model.root.position;
-    s.world.update(dt, this.rig.focus.x, p.x, p.y);
-    if (this.state === 'menu') s.lights.update(dt, this.rig.focus.x, this.rig.focus.y, 0, 0.3);
-    const envIn = s.environment(this.rig.focus.x, this.rig.focus.y);
+    s.world.update(dt, this.rig.focus.x, this.rig.focus.z, p.x, p.y, p.z);
+    if (this.state === 'menu') s.lights.update(dt, this.rig.focus.x, this.rig.focus.y, this.rig.focus.z, 0, 0.3);
+    const envIn = s.environment(this.rig.focus.x, this.rig.focus.y, this.rig.focus.z);
     this.env.update(dt, this.renderer.aspect, this.renderer.pixelRatio, envIn);
     // HUD DOM updates at 10 Hz: plenty for gauges, cheap on slow CPUs.
     this.hudTimer -= dt;
@@ -287,7 +297,7 @@ export class Game implements GameApi {
       night: 1 - s.clock.daylight,
       region: regionAt(this.rig.focus.x).id,
       underground: envIn.interior,
-      fireNear: s.lights.heatAt(p.x, p.y + 0.8),
+      fireNear: s.lights.heatAt(p.x, p.y + 0.8, p.z),
       danger: s.wildlife.threat,
     });
     this.ui.update(dt, this.project, this.settings.get().showFps ? this.loop.fps : null);

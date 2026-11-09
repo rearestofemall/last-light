@@ -10,15 +10,15 @@ function sample(x = 12): SaveData {
     version: SAVE_VERSION,
     savedAt: 1700000000000,
     playTime: 321,
-    player: { x, y: 1.5, facing: -1 },
-    respawn: { x: -3, y: 0 },
+    player: { x, y: 1.5, z: 4, heading: 1.2 },
+    respawn: { x: -3, y: 0, z: 0 },
     world: { seed: 1914, time: 3.5, weather: { state: 'rain', timer: 120 } },
     survival: { vitals: { health: 80, hunger: 50, thirst: 40, warmth: 60, stamina: 90, energy: 70 }, wetness: 0.2, sickness: 0 },
     inventory: [{ id: 'wood', qty: 5 }, null, { id: 'axe', qty: 1, dur: 40 }],
     equipment: { selected: 2, clothing: null, lanternOn: true },
     crafting: ['campfire', 'axe'],
     containers: { 'ranger-crate': [{ id: 'cloth', qty: 2 }] },
-    structures: [{ piece: 'floor', cell: 10, level: 0, base: 1.25 }],
+    structures: [{ piece: 'floor', i: 10, j: 2, level: 0, base: 1.25 }],
     resources: { n4: [2, 0] },
     lights: { 'ranger-lamp': { fuel: 120, on: true } },
     story: { readNotes: ['j-note-1'], locations: ['campsite', 'trailhead'], flags: { 'tutorial:basics': true }, explored: [0, 1] },
@@ -50,6 +50,14 @@ describe('save schema', () => {
     const v = validateSave(d, clampX);
     expect(v.player.x).toBe(436);
     expect(v.story.flags).toEqual({ ok: 1 });
+  });
+
+  it('migrates 2.5D (v2) saves: positions gain depth, structures are refunded', () => {
+    const v2 = { ...sample(30), version: 2, player: { x: 30, y: 1, facing: -1 }, respawn: { x: 0, y: 0 }, structures: [{ piece: 'wall', cell: 3, level: 0, base: 1 }], inventory: [] };
+    const v = validateSave(v2, clampX);
+    expect(v.player.z).toBeCloseTo(1.5);
+    expect(v.structures).toEqual([]);
+    expect(v.inventory).toEqual([{ id: 'wall', qty: 1 }]);
   });
 
   it('migrates Milestone 1 (v1) saves, keeping position and story', () => {

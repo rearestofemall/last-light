@@ -3,6 +3,7 @@ export type Action =
   | 'right'
   | 'up'
   | 'down'
+  | 'drop'
   | 'jump'
   | 'sprint'
   | 'interact'
@@ -29,6 +30,7 @@ const BINDINGS: Record<Action, string[]> = {
   right: ['KeyD', 'ArrowRight'],
   up: ['KeyW', 'ArrowUp'],
   down: ['KeyS', 'ArrowDown'],
+  drop: ['KeyZ', 'ControlLeft'],
   jump: ['Space'],
   sprint: ['ShiftLeft', 'ShiftRight'],
   interact: ['KeyE'],
@@ -71,6 +73,35 @@ export class Input {
   mouseY = 0;
   /** True when the pointer is over the game canvas (not a UI element). */
   pointerOnCanvas = false;
+  /** Accumulated mouse-look movement while the pointer is locked. */
+  lookDX = 0;
+  lookDY = 0;
+  /** Set by the game: whether clicking the canvas should capture the mouse. */
+  wantLock = false;
+  private canvas: HTMLCanvasElement | null = null;
+
+  get locked(): boolean {
+    return !!this.canvas && document.pointerLockElement === this.canvas;
+  }
+
+  attachCanvas(c: HTMLCanvasElement): void {
+    this.canvas = c;
+  }
+
+  requestLock(): void {
+    if (this.canvas && !this.locked) {
+      try {
+        const r = this.canvas.requestPointerLock() as unknown as Promise<void> | undefined;
+        r?.catch?.(() => {});
+      } catch {
+        /* not available (e.g. headless) */
+      }
+    }
+  }
+
+  releaseLock(): void {
+    if (this.locked) document.exitPointerLock();
+  }
 
   constructor(target: Window = window) {
     for (const [action, codes] of Object.entries(BINDINGS) as [Action, string[]][]) {
@@ -82,6 +113,13 @@ export class Input {
     target.addEventListener('wheel', (e) => {
       if ((e.target as HTMLElement)?.tagName === 'CANVAS') this.wheelDelta += Math.sign(e.deltaY);
     }, { passive: true });
+    target.addEventListener('mousemove', (e) => {
+      // Captured mouse, or right-drag as a fallback when pointer lock is unavailable.
+      if (this.locked || (this.down.has('Mouse2') && this.wantLock)) {
+        this.lookDX += e.movementX;
+        this.lookDY += e.movementY;
+      }
+    });
     target.addEventListener('pointermove', (e) => {
       this.mouseX = e.clientX;
       this.mouseY = e.clientY;
@@ -89,6 +127,11 @@ export class Input {
     });
     target.addEventListener('pointerdown', (e) => {
       if ((e.target as HTMLElement)?.tagName !== 'CANVAS') return;
+      // The first click captures the mouse for looking around; it isn't an action.
+      if (this.wantLock && !this.locked) {
+        this.requestLock();
+        return;
+      }
       this.press(`Mouse${e.button}`);
     });
     target.addEventListener('pointerup', (e) => this.down.delete(`Mouse${e.button}`));
@@ -140,6 +183,8 @@ export class Input {
   flush(): void {
     this.latched.clear();
     this.wheelDelta = 0;
+    this.lookDX = 0;
+    this.lookDY = 0;
   }
 
   reset(): void {

@@ -121,14 +121,13 @@ export class PlayerModel {
     const b = pc.body;
     const x = lerp(pc.prevX, b.x, alpha);
     const y = lerp(pc.prevY, b.y, alpha);
-    this.root.position.set(x, y, 0);
+    const z = lerp(pc.prevZ, b.z, alpha);
+    this.root.position.set(x, y, z);
 
-    // Facing: turn three-quarters toward the camera so the face stays readable.
-    const targetYaw = pc.facing > 0 ? Math.PI / 2 - 0.4 : -Math.PI / 2 + 0.4;
-    this.yaw += angleDelta(this.yaw, targetYaw) * (1 - Math.exp(-12 * dt));
+    this.yaw += angleDelta(this.yaw, pc.heading) * (1 - Math.exp(-12 * dt));
     this.root.rotation.y = this.yaw;
 
-    const speed = Math.abs(b.vx);
+    const speed = Math.hypot(b.vx, b.vz);
     const run = clamp((speed - 3.5) / 3.5, 0, 1);
     const moving = clamp(speed / 3, 0, 1);
     const airborne = !b.grounded && pc.state !== 'swim' && pc.state !== 'wade';

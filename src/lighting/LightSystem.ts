@@ -174,11 +174,11 @@ export class LightSystem {
   }
 
   /** Light level from placed and carried sources at a point (0 = none, ≥1 = well lit). */
-  lightAt(x: number, y: number): number {
+  lightAt(x: number, y: number, z = 0): number {
     let sum = 0;
     for (const s of this.sources) {
       if (!s.on) continue;
-      const d = Math.hypot(s.x - x, (s.y - y) * 0.8);
+      const d = Math.hypot(s.x - x, (s.y - y) * 0.8, s.z - z);
       if (d >= s.radius) continue;
       const k = 1 - d / s.radius;
       sum += k * k * 1.6;
@@ -187,11 +187,11 @@ export class LightSystem {
   }
 
   /** Heat from nearby fires (0–1). */
-  heatAt(x: number, y: number): number {
+  heatAt(x: number, y: number, z = 0): number {
     let h = 0;
     for (const s of this.sources) {
       if (!s.on || s.heat <= 0) continue;
-      const d = Math.hypot(s.x - x, (s.y - y) * 0.7);
+      const d = Math.hypot(s.x - x, (s.y - y) * 0.7, s.z - z);
       const r = s.radius * 0.55;
       if (d < r) h = Math.max(h, s.heat * (1 - d / r));
     }
@@ -199,12 +199,12 @@ export class LightSystem {
   }
 
   /** Nearest lit source of a given kind within range (for crafting stations). */
-  nearestLit(x: number, y: number, kinds: LightKind[], range: number): LightSource | null {
+  nearestLit(x: number, y: number, z: number, kinds: LightKind[], range: number): LightSource | null {
     let best: LightSource | null = null;
     let bd = range;
     for (const s of this.sources) {
       if (!s.on || !kinds.includes(s.kind)) continue;
-      const d = Math.hypot(s.x - x, s.y - y);
+      const d = Math.hypot(s.x - x, s.y - y, s.z - z);
       if (d < bd) {
         bd = d;
         best = s;
@@ -216,7 +216,7 @@ export class LightSystem {
   /**
    * @param rain precipitation reaching exposed flames (0–1)
    */
-  update(dt: number, focusX: number, focusY: number, rain: number, wind: number): void {
+  update(dt: number, focusX: number, focusY: number, focusZ: number, rain: number, wind: number): void {
     this.time += dt;
     for (const s of this.sources) {
       if (!s.on) {
@@ -245,11 +245,12 @@ export class LightSystem {
     // Assign the light pool to the nearest lit sources.
     this.sorted.length = 0;
     for (const s of this.sources) if (s.on) this.sorted.push(s);
-    this.sorted.sort((a, b) => Math.abs(a.x - focusX) + Math.abs(a.y - focusY) * 0.5 - (Math.abs(b.x - focusX) + Math.abs(b.y - focusY) * 0.5));
+    const dist = (s: LightSource) => Math.abs(s.x - focusX) + Math.abs(s.z - focusZ) + Math.abs(s.y - focusY) * 0.5;
+    this.sorted.sort((a, b) => dist(a) - dist(b));
     for (let i = 0; i < this.pool.length; i++) {
       const l = this.pool[i];
       const s = this.sorted[i];
-      if (!s || Math.abs(s.x - focusX) > 60) {
+      if (!s || dist(s) > 70) {
         l.intensity = 0;
         continue;
       }
@@ -258,7 +259,7 @@ export class LightSystem {
       l.color.setHex(s.color);
       l.intensity = s.intensity * 14 * fuelK * flicker;
       l.distance = s.radius * 1.7;
-      l.position.set(s.x, s.y + 0.6, s.z + 0.8);
+      l.position.set(s.x, s.y + 0.6, s.z);
     }
   }
 

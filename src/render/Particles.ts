@@ -55,7 +55,7 @@ export class Particles {
       uniforms: {
         uTime: sharedUniforms.uTime,
         uCenter: { value: new THREE.Vector3() },
-        uBox: { value: new THREE.Vector3(56, 24, 30) },
+        uBox: { value: new THREE.Vector3(40, 20, 40) },
         uSize: { value: 5 },
         uPixelRatio: { value: 1 },
         uScale: { value: 1 },
@@ -82,8 +82,8 @@ export class Particles {
 
   update(center: THREE.Vector3, pixelRatio: number, viewHeight: number): void {
     const u = this.material.uniforms;
-    u.uCenter.value.set(center.x, center.y + 2, -4);
+    u.uCenter.value.set(center.x, center.y + 2, center.z);
     u.uPixelRatio.value = pixelRatio;
-    u.uScale.value = 20 / viewHeight;
+    u.uScale.value = 0.9 + 0 * viewHeight;
   }
 }

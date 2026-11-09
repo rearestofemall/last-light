@@ -70,6 +70,8 @@ export interface Fadeable {
   x1: number;
   y0: number;
   y1: number;
+  z0: number;
+  z1: number;
   materials: THREE.Material[];
   /** Meshes using those materials; they stop casting shadows while faded. */
   meshes: THREE.Mesh[];
@@ -82,6 +84,8 @@ export interface Interior {
   x1: number;
   y0: number;
   y1: number;
+  z0: number;
+  z1: number;
 }
 
 /** Something in the world that changes once a story flag is set (rockslide cleared, etc.). */
@@ -137,12 +141,15 @@ export function mesh(geo: THREE.BufferGeometry, mat: THREE.Material, x: number, 
   return m;
 }
 
-export function solid(ctx: SiteContext, x0: number, x1: number, y0: number, y1: number, surface: Surface, tag?: string): Collider {
-  return ctx.collision.add({ minX: x0, maxX: x1, minY: y0, maxY: y1, kind: 'solid', surface, tag });
+/** Full-map depth, for barriers that must not be walked around. */
+export const FULL_Z: [number, number] = [-460, 460];
+
+export function solid(ctx: SiteContext, x0: number, x1: number, y0: number, y1: number, surface: Surface, tag: string | undefined, z0: number, z1: number): Collider {
+  return ctx.collision.add({ minX: x0, maxX: x1, minY: y0, maxY: y1, minZ: z0, maxZ: z1, kind: 'solid', surface, tag });
 }
 
-export function oneway(ctx: SiteContext, x0: number, x1: number, top: number, surface: Surface, tag?: string): Collider {
-  return ctx.collision.add({ minX: x0, maxX: x1, minY: top - 0.3, maxY: top, kind: 'oneway', surface, tag });
+export function oneway(ctx: SiteContext, x0: number, x1: number, top: number, surface: Surface, tag: string | undefined, z0: number, z1: number): Collider {
+  return ctx.collision.add({ minX: x0, maxX: x1, minY: top - 0.3, maxY: top, minZ: z0, maxZ: z1, kind: 'oneway', surface, tag });
 }
 
 /** Something that shows a short line of text when examined. */
@@ -242,7 +249,8 @@ export function lootCrate(ctx: SiteContext, id: string, x: number, y: number, z:
     id,
     x,
     y: y + 0.6,
-    radius: 1.3,
+    z,
+    radius: 1.8,
     verb: 'Search',
     label: title.toLowerCase(),
     prompt: () => {
@@ -269,7 +277,10 @@ export function fixedLight(ctx: SiteContext, id: string, kind: LightKind, x: num
     light.sheltered = false;
   }
   ctx.lights.add(light);
-  ctx.interactions.add(fireInteractable(id, light, x, y + 0.2, ctx.inventory, ctx.lights, ctx.events));
+  const it = fireInteractable(id, light, x, y + 0.2, ctx.inventory, ctx.lights, ctx.events);
+  it.z = z;
+  it.radius = 2;
+  ctx.interactions.add(it);
   return light;
 }
 

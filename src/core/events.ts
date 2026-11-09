@@ -37,7 +37,7 @@ export interface GameEvents {
   'player:damaged': { amount: number; cause: string };
   'player:died': { cause: string };
   'player:action': { kind: 'swing' | 'work' | 'eat' };
-  'interact:prompt': { text: string; alt?: string; key: string; worldX: number; worldY: number } | null;
+  'interact:prompt': { text: string; alt?: string; key: string; worldX: number; worldY: number; worldZ: number } | null;
   'note:open': { id: string; title: string; body: string; kind: 'note' | 'sign' | 'photo' | 'radio' };
   'location:discovered': { id: string; name: string; region: string; first: boolean };
   'item:gained': { id: string; qty: number };

@@ -31,18 +31,18 @@ export function addWindSway<T extends THREE.Material>(material: T, strength: num
       );
     }
     shader.vertexShader =
-      'uniform float uTime;\nuniform float uWind;\n' +
+      'uniform float uTime;\nuniform float uWind;\nattribute float aH;\nattribute float aPhase;\n' +
       shader.vertexShader.replace(
         '#include <begin_vertex>',
         `#include <begin_vertex>
         #ifdef USE_INSTANCING
           vec3 ip = vec3(instanceMatrix[3][0], instanceMatrix[3][1], instanceMatrix[3][2]);
+          float ph = ip.x * 0.37 + ip.z * 0.23;
         #else
-          vec3 ip = vec3(modelMatrix[3][0], modelMatrix[3][1], modelMatrix[3][2]);
+          float ph = aPhase;
         #endif
-        float hgt = max(position.y, 0.0);
-        float ph = ip.x * 0.37 + ip.z * 0.23;
-        float gust = 0.6 + 0.4 * sin(uTime * 0.31 + ip.x * 0.02);
+        float hgt = aH;
+        float gust = 0.6 + 0.4 * sin(uTime * 0.31 + ph * 0.054);
         float sway = (sin(uTime * 1.35 + ph) * 0.65 + sin(uTime * 3.1 + ph * 1.7) * 0.22) * uWind * gust * ${strength.toFixed(5)} * hgt * hgt;
         transformed.x += sway;
         transformed.z += sway * 0.35;`,

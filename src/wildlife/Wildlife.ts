@@ -174,14 +174,15 @@ export interface WildlifeHost {
   interactions: InteractionSystem;
   playerX(): number;
   playerY(): number;
+  playerZ(): number;
   /** Light level at a point from fires, torches, lanterns. */
-  lightAt(x: number, y: number): number;
+  lightAt(x: number, y: number, z: number): number;
   /** 0 day … 1 night */
   darkness(): number;
   damagePlayer(amount: number, cause: string): void;
   giveLoot(id: string, qty: number): number;
   hasKnife(): boolean;
-  isUnderground(x: number, y: number): boolean;
+  isUnderground(x: number, z: number, y: number): boolean;
 }
 
 let nextId = 0;
@@ -191,7 +192,8 @@ class Animal {
   body: Body;
   state: State = 'idle';
   timer = 0;
-  dir: 1 | -1 = 1;
+  /** Travel direction (radians, 0 = +z). */
+  heading = Math.random() * Math.PI * 2;
   hp: number;
   rig: Rig;
   phase = Math.random() * 10;
@@ -200,25 +202,29 @@ class Animal {
   growlCd = 0;
   carcass: Interactable | null = null;
   deadTime = 0;
-  flyY = 0;
   yaw = 0;
+  circleDir = Math.random() < 0.5 ? 1 : -1;
 
   constructor(
     readonly species: Species,
     x: number,
     y: number,
+    z: number,
   ) {
     const def = SPECIES[species];
     this.hp = def.hp;
-    this.body = createBody(x, y, species === 'deer' ? 0.5 : species === 'wolf' ? 0.4 : 0.15, def.size);
+    this.body = createBody(x, y, z, species === 'deer' ? 0.45 : species === 'wolf' ? 0.38 : 0.15, def.size);
     this.rig = species === 'bird' ? birdRig() : quadruped(species);
     this.rig.root.traverse((o) => (o.castShadow = true));
   }
 }
 
+const angleTo = (fx: number, fz: number, tx: number, tz: number) => Math.atan2(tx - fx, tz - fz);
+
 /**
  * Spawns and simulates animals around the player. Each species runs a small state machine;
- * time of day, light and the player's behaviour drive transitions.
+ * time of day, light and the player's behaviour drive transitions. Movement is steering on
+ * the ground plane (the open land needs no pathfinding; obstacles make animals turn).
  */
 export class Wildlife {
   readonly group = new THREE.Group();
@@ -234,13 +240,13 @@ export class Wildlife {
     this.group.name = 'wildlife';
   }
 
-  /** 0–1: how close the nearest hunting wolf is (drives tension music). */
   get threat(): number {
     let t = 0;
     const px = this.host.playerX();
+    const pz = this.host.playerZ();
     for (const a of this.animals) {
       if (a.species !== 'wolf' || (a.state !== 'stalk' && a.state !== 'attack' && a.state !== 'circle')) continue;
-      t = Math.max(t, 1 - Math.min(1, Math.abs(a.body.x - px) / 25));
+      t = Math.max(t, 1 - Math.min(1, Math.hypot(a.body.x - px, a.body.z - pz) / 25));
     }
     return t;
   }
@@ -260,12 +266,15 @@ export class Wildlife {
   }
 
   /** Attack animals in front of the player. Returns true if something was hit. */
-  strike(x: number, y: number, facing: number, reach: number, damage: number): boolean {
+  strike(x: number, y: number, z: number, fx: number, fz: number, reach: number, damage: number): boolean {
     let hit = false;
     for (const a of this.animals) {
       if (a.state === 'dead') continue;
-      const dx = (a.body.x - x) * facing;
-      if (dx < -0.4 || dx > reach + a.body.halfWidth || Math.abs(a.body.y - y) > 1.6) continue;
+      const dx = a.body.x - x;
+      const dz = a.body.z - z;
+      const d = Math.hypot(dx, dz);
+      if (d > reach + a.body.r || Math.abs(a.body.y - y) > 1.6) continue;
+      if (d > 0.4 && (dx * fx + dz * fz) / d < 0.25) continue;
       a.hp -= damage;
       a.hurtFlash = 0.25;
       hit = true;
@@ -276,7 +285,6 @@ export class Wildlife {
       } else {
         a.state = 'flee';
         a.timer = 6;
-        a.dir = a.body.x > x ? 1 : -1;
       }
     }
     return hit;
@@ -285,7 +293,7 @@ export class Wildlife {
   private kill(a: Animal): void {
     a.state = 'dead';
     a.deadTime = 0;
-    a.body.vx = 0;
+    a.body.vx = a.body.vz = 0;
     const def = SPECIES[a.species];
     if (!def.loot.length) {
       a.deadTime = 999;
@@ -295,62 +303,62 @@ export class Wildlife {
       id: `carcass-${a.id}`,
       x: a.body.x,
       y: a.body.y + 0.5,
-      radius: 1.6,
+      z: a.body.z,
+      radius: 1.8,
       verb: 'Butcher',
       label: def.label.toLowerCase(),
       onInteract: () => {
         const knife = this.host.hasKnife();
-        let got = 0;
         for (const [id, mn, mx] of def.loot) {
           let q = mn + Math.floor(Math.random() * (mx - mn + 1));
           if (!knife && id === 'hide') q = Math.max(0, q - 1);
-          if (q > 0) got += this.host.giveLoot(id, q);
+          if (q > 0) this.host.giveLoot(id, q);
         }
         if (!knife) this.host.events.emit('toast', { text: 'Without a knife, you salvage less.', kind: 'info', duration: 3 });
         this.host.events.emit('sfx', { name: 'gather', x: a.body.x });
-        if (got >= 0) {
-          this.host.interactions.remove(it);
-          a.carcass = null;
-          a.deadTime = 999;
-        }
+        this.host.interactions.remove(it);
+        a.carcass = null;
+        a.deadTime = 999;
       },
     };
     a.carcass = it;
     this.host.interactions.add(it);
   }
 
-  /** Debug/scripting: spawn an animal at x. */
-  spawnAt(sp: Species, x: number): void {
-    const y = this.world.resolveSpawnY(x, this.world.groundAt(x, 0.5), 0.5, 1);
-    const a = new Animal(sp, x, y);
+  /** Spawn an animal at a point (debug and scripted encounters). */
+  spawnAt(sp: Species, x: number, z = this.host.playerZ()): void {
+    const y = this.world.resolveSpawnY(x, z, this.world.groundAt(x, z, 0.5), 0.5, 1);
+    const a = new Animal(sp, x, y, z);
     a.state = 'wander';
     this.animals.push(a);
     this.group.add(a.rig.root);
   }
 
-  private spawn(region: RegionId, night: boolean, px: number): void {
+  private spawn(region: RegionId, night: boolean, px: number, pz: number): void {
     const pop = POPULATION[region];
     const counts: Partial<Record<Species, number>> = {};
     for (const a of this.animals) if (a.state !== 'dead') counts[a.species] = (counts[a.species] ?? 0) + 1;
     const options = (Object.keys(pop) as Species[]).filter((s) => {
       const def = SPECIES[s];
       const active = night ? def.nocturnal || (s === 'wolf' && region === 'frost') : def.diurnal || (s === 'wolf' && region === 'frost' && Math.random() < 0.3);
-      const max = (pop[s] ?? 0) * (s === 'wolf' && night ? 1.5 : 1);
+      const max = (pop[s] ?? 0) * (s === 'wolf' && night ? 1.5 : 1) * 1.5;
       return active && (counts[s] ?? 0) < max;
     });
     if (!options.length) return;
     const sp = options[Math.floor(Math.random() * options.length)];
-    const side = Math.random() < 0.5 ? -1 : 1;
-    const x = px + side * (34 + Math.random() * 30);
-    if (x < this.world.bounds.min + 5 || x > this.world.bounds.max - 5) return;
-    if (this.world.terrain.waterAt(x)) return;
-    const y = this.world.resolveSpawnY(x, this.world.groundAt(x, 0.5), 0.5, 1);
-    if (this.host.isUnderground(x, y)) return;
-    const a = new Animal(sp, x, y);
-    a.dir = side > 0 ? -1 : 1;
-    a.state = sp === 'wolf' ? 'wander' : 'graze';
+    const ang = Math.random() * Math.PI * 2;
+    const dist = 36 + Math.random() * 30;
+    const x = px + Math.sin(ang) * dist;
+    const z = pz + Math.cos(ang) * dist;
+    const b = this.world.bounds;
+    if (x < b.minX + 5 || x > b.maxX - 5 || z < b.minZ + 5 || z > b.maxZ - 5) return;
+    if (this.world.terrain.waterAt(x, z)) return;
+    if (this.world.terrain.gradientAt(x, z) > 0.9) return;
+    const y = this.world.resolveSpawnY(x, z, this.world.groundAt(x, z, 0.5), 0.5, 1);
+    if (this.host.isUnderground(x, z, y)) return;
+    const a = new Animal(sp, x, y, z);
+    a.state = sp === 'wolf' ? 'wander' : sp === 'bird' ? 'idle' : 'graze';
     a.timer = 2 + Math.random() * 4;
-    if (sp === 'bird') a.state = 'idle';
     this.animals.push(a);
     this.group.add(a.rig.root);
   }
@@ -358,15 +366,16 @@ export class Wildlife {
   update(dt: number): void {
     const px = this.host.playerX();
     const py = this.host.playerY();
+    const pz = this.host.playerZ();
     const night = this.host.darkness() > 0.55;
     const region = regionAt(px).id;
-    const underground = this.host.isUnderground(px, py);
+    const underground = this.host.isUnderground(px, pz, py);
 
     if (this.enabled && !underground) {
       this.spawnTimer -= dt;
       if (this.spawnTimer <= 0) {
-        this.spawnTimer = 3 + Math.random() * 3;
-        this.spawn(region, night, px);
+        this.spawnTimer = 2.5 + Math.random() * 2.5;
+        this.spawn(region, night, px, pz);
       }
       if (night) {
         this.howlTimer -= dt;
@@ -379,85 +388,86 @@ export class Wildlife {
 
     for (let i = this.animals.length - 1; i >= 0; i--) {
       const a = this.animals[i];
-      const far = Math.abs(a.body.x - px) > 110;
+      const dist = Math.hypot(a.body.x - px, a.body.z - pz);
+      const far = dist > 110;
       const gone = a.state === 'dead' ? (a.deadTime += dt) > 240 : false;
-      const outOfTime = a.state !== 'dead' && a.state !== 'attack' && a.state !== 'stalk' && Math.abs(a.body.x - px) > 45 && ((night && SPECIES[a.species].diurnal && a.species !== 'deer') || (!night && a.species === 'wolf' && region !== 'frost'));
-      if (far || gone || (a.state === 'fly' && a.timer <= 0) || outOfTime || (a.deadTime >= 999)) {
+      const outOfTime = a.state !== 'dead' && a.state !== 'attack' && a.state !== 'stalk' && dist > 45 && ((night && SPECIES[a.species].diurnal && a.species !== 'deer') || (!night && a.species === 'wolf' && region !== 'frost'));
+      if (far || gone || (a.state === 'fly' && a.timer <= 0) || outOfTime || a.deadTime >= 999) {
         this.despawn(a);
         this.animals.splice(i, 1);
         continue;
       }
-      this.think(a, dt, px, py, night);
-      this.move(a, dt);
+      this.think(a, dt, px, py, pz, night);
+      this.move(a, dt, px, pz);
       this.animate(a, dt);
     }
   }
 
-  private think(a: Animal, dt: number, px: number, py: number, night: boolean): void {
+  private think(a: Animal, dt: number, px: number, py: number, pz: number, night: boolean): void {
     const def = SPECIES[a.species];
     a.timer -= dt;
     a.attackCd -= dt;
     a.growlCd -= dt;
     a.hurtFlash = Math.max(0, a.hurtFlash - dt);
     if (a.state === 'dead') return;
-    const dx = px - a.body.x;
-    const dist = Math.abs(dx);
-    const toward: 1 | -1 = dx > 0 ? 1 : -1;
+    const b = a.body;
+    const dist = Math.hypot(px - b.x, pz - b.z);
+    const toward = angleTo(b.x, b.z, px, pz);
+    const away = toward + Math.PI;
 
     if (a.species === 'bird') {
       if (a.state !== 'fly' && dist < def.shy) {
         a.state = 'fly';
         a.timer = 4;
-        a.dir = toward === 1 ? -1 : 1;
+        a.heading = away + (Math.random() - 0.5);
       }
-      if (a.state === 'idle' && a.timer <= 0) {
-        a.timer = 1 + Math.random() * 3;
-        if (Math.random() < 0.3) a.dir = a.dir === 1 ? -1 : 1;
-      }
+      if (a.state === 'idle' && a.timer <= 0) a.timer = 1 + Math.random() * 3;
       return;
     }
 
     if (a.species === 'wolf') {
-      const playerLight = this.host.lightAt(px, py);
-      const wolfLight = this.host.lightAt(a.body.x, a.body.y);
-      const huntRange = night ? 26 : 12;
+      const playerLight = this.host.lightAt(px, py + 1, pz);
+      const wolfLight = this.host.lightAt(b.x, b.y + 0.5, b.z);
+      const huntRange = night ? 28 : 12;
       if (a.state === 'flee') {
-        a.dir = toward === 1 ? -1 : 1;
+        a.heading = away;
         if (a.timer <= 0) a.state = 'wander';
         return;
       }
       if (wolfLight > 0.25) {
         // Light is life: wolves back away from fire and circle at its edge.
         a.state = 'circle';
-        a.dir = toward === 1 ? -1 : 1;
-        a.timer = 1.5;
+        a.heading = away + a.circleDir * 0.9;
+        a.timer = 1.2;
         if (a.growlCd <= 0 && dist < 16) {
           a.growlCd = 6 + Math.random() * 6;
-          this.host.events.emit('sfx', { name: 'growl', x: a.body.x });
+          this.host.events.emit('sfx', { name: 'growl', x: b.x });
         }
         return;
       }
       if (dist < huntRange && playerLight < 0.3) {
         a.state = dist < 1.8 ? 'attack' : 'stalk';
-        a.dir = toward;
-        if (a.state === 'attack' && a.attackCd <= 0 && Math.abs(py - a.body.y) < 1.4) {
+        a.heading = toward;
+        if (a.state === 'attack' && a.attackCd <= 0 && Math.abs(py - b.y) < 1.4) {
           a.attackCd = 1.5;
           this.host.damagePlayer(9 + Math.random() * 6, 'wolves');
-          this.host.events.emit('sfx', { name: 'growl', x: a.body.x });
+          this.host.events.emit('sfx', { name: 'growl', x: b.x });
         }
         return;
       }
       if (a.state === 'circle' || a.state === 'stalk') {
         // Prowl just outside the light, waiting for it to fail.
-        a.state = dist < huntRange + 6 && playerLight >= 0.3 ? 'circle' : 'wander';
-        a.dir = a.state === 'circle' ? (dist < 12 ? (toward === 1 ? -1 : 1) : toward) : a.dir;
+        if (dist < huntRange + 8 && playerLight >= 0.3) {
+          a.state = 'circle';
+          a.heading = toward + a.circleDir * (dist < 12 ? 2.2 : 1.4);
+        } else a.state = 'wander';
         a.timer = 1;
         return;
       }
       if (a.timer <= 0) {
         a.state = Math.random() < 0.6 ? 'wander' : 'idle';
         a.timer = 2 + Math.random() * 5;
-        if (Math.random() < 0.5) a.dir = a.dir === 1 ? -1 : 1;
+        a.heading += (Math.random() - 0.5) * 2;
       }
       return;
     }
@@ -479,7 +489,7 @@ export class Wildlife {
       a.timer = 4 + Math.random() * 3;
     }
     if (a.state === 'flee') {
-      a.dir = toward === 1 ? -1 : 1;
+      a.heading = away + Math.sin(a.phase * 0.7) * 0.4;
       if (a.timer <= 0 && dist > def.shy * 1.5) {
         a.state = 'idle';
         a.timer = 2;
@@ -490,17 +500,17 @@ export class Wildlife {
       const r = Math.random();
       a.state = r < 0.45 ? 'graze' : r < 0.85 ? 'wander' : 'idle';
       a.timer = 2 + Math.random() * 5;
-      if (Math.random() < 0.4) a.dir = a.dir === 1 ? -1 : 1;
+      a.heading += (Math.random() - 0.5) * 2.4;
     }
   }
 
-  private move(a: Animal, dt: number): void {
+  private move(a: Animal, dt: number, px: number, pz: number): void {
     const def = SPECIES[a.species];
     const b = a.body;
     if (a.species === 'bird') {
       if (a.state === 'fly') {
-        b.x += a.dir * def.run * dt;
-        a.flyY += dt * 4;
+        b.x += Math.sin(a.heading) * def.run * dt;
+        b.z += Math.cos(a.heading) * def.run * dt;
         b.y += dt * 4;
       }
       return;
@@ -514,35 +524,33 @@ export class Wildlife {
         speed = def.run;
         break;
       case 'stalk':
-        speed = def.walk * 1.5;
+        speed = def.walk * 1.6;
         break;
       case 'attack':
         speed = def.run * 0.8;
         break;
       case 'circle':
-        speed = def.walk * 1.2;
+        speed = def.walk * 1.3;
         break;
-      case 'dead':
-      case 'sleep':
-      case 'graze':
-      case 'idle':
+      default:
         speed = 0;
     }
-    if (a.state === 'attack' && Math.abs(this.host.playerX() - b.x) < 1.1) speed = 0;
-    // Avoid water and world edges by turning around.
-    const ahead = b.x + a.dir * 1.5;
-    if (speed > 0 && (this.world.terrain.waterAt(ahead) || ahead < this.world.bounds.min + 3 || ahead > this.world.bounds.max - 3)) {
-      a.dir = a.dir === 1 ? -1 : 1;
-      if (a.state === 'flee') a.timer = Math.min(a.timer, 0.5);
+    if (a.state === 'attack' && Math.hypot(px - b.x, pz - b.z) < 1.2) speed = 0;
+    // Steer away from water, steep ground and the edges of the world.
+    const lx = b.x + Math.sin(a.heading) * 2;
+    const lz = b.z + Math.cos(a.heading) * 2;
+    const wb = this.world.bounds;
+    if (speed > 0 && (this.world.terrain.waterAt(lx, lz) || this.world.terrain.gradientAt(lx, lz) > 1 || lx < wb.minX + 3 || lx > wb.maxX - 3 || lz < wb.minZ + 3 || lz > wb.maxZ - 3)) {
+      a.heading += a.circleDir * 1.2;
     }
-    b.vx = damp(b.vx, a.dir * speed, 6, dt);
+    b.vx = damp(b.vx, Math.sin(a.heading) * speed, 6, dt);
+    b.vz = damp(b.vz, Math.cos(a.heading) * speed, 6, dt);
     if (!b.grounded) b.vy = Math.max(-25, b.vy - 30 * dt);
     else b.vy = -1;
     const res = moveBody(this.world, b, dt, DEFAULT_MOVE);
-    if (res.blockedX && b.grounded && speed > 0) {
-      // Hop small obstacles; otherwise turn back.
-      if (a.species !== 'wolf' || a.state === 'wander') a.dir = a.dir === 1 ? -1 : 1;
-      else b.vy = 7;
+    if ((res.blockedX || res.blockedZ) && b.grounded && speed > 0) {
+      if (a.species === 'wolf' && a.state !== 'wander' && Math.random() < 0.3) b.vy = 7;
+      else a.heading += a.circleDir * (1 + Math.random());
     }
     if (b.y < -400) a.deadTime = 999;
   }
@@ -550,12 +558,14 @@ export class Wildlife {
   private animate(a: Animal, dt: number): void {
     const r = a.rig;
     const b = a.body;
-    r.root.position.set(b.x, b.y, a.species === 'bird' ? -0.6 : -0.9);
-    const targetYaw = a.dir === 1 ? -0.25 : Math.PI + 0.25;
-    a.yaw += (targetYaw - a.yaw) * clamp(dt * 8, 0, 1);
+    r.root.position.set(b.x, b.y, b.z);
+    const sp = Math.hypot(b.vx, b.vz);
+    const face = sp > 0.3 ? Math.atan2(b.vx, b.vz) : a.heading;
+    let dy = face - Math.PI / 2 - a.yaw;
+    dy = Math.atan2(Math.sin(dy), Math.cos(dy));
+    a.yaw += dy * clamp(dt * 8, 0, 1);
     r.root.rotation.y = a.yaw;
-    const speed = Math.abs(b.vx);
-    a.phase += dt * (2 + speed * 2.2);
+    a.phase += dt * (2 + sp * 2.2);
     if (a.species === 'bird') {
       const flap = a.state === 'fly' ? Math.sin(a.phase * 5) * 0.9 : 0;
       r.wings![0].rotation.x = flap;
@@ -569,7 +579,7 @@ export class Wildlife {
       r.root.position.y = b.y + 0.15;
       return;
     }
-    const swing = Math.min(1, speed / 3) * 0.6;
+    const swing = Math.min(1, sp / 3) * 0.6;
     r.legs.forEach((leg, i) => {
       const off = i === 0 || i === 3 ? 0 : Math.PI;
       leg.rotation.z = Math.sin(a.phase + off) * swing;
@@ -578,7 +588,7 @@ export class Wildlife {
     r.body.rotation.z = damp(r.body.rotation.z, a.state === 'graze' ? -0.08 : a.state === 'flee' ? 0.05 : 0, 6, dt);
     r.head.rotation.z = damp(r.head.rotation.z, a.state === 'graze' ? -1.1 : a.state === 'stalk' || a.state === 'circle' ? -0.35 : 0, 5, dt);
     const lower = sleeping ? (a.species === 'deer' ? 0.55 : 0.35) : a.state === 'stalk' ? 0.12 : 0;
-    r.root.position.y = b.y - lower + (a.species === 'rabbit' && speed > 0.5 ? Math.abs(Math.sin(a.phase)) * 0.15 : 0);
+    r.root.position.y = b.y - lower + (a.species === 'rabbit' && sp > 0.5 ? Math.abs(Math.sin(a.phase)) * 0.15 : 0);
     if (r.eyes) for (const e of r.eyes) e.visible = this.host.darkness() > 0.4;
   }
 }

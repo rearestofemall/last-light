@@ -4,10 +4,10 @@ import type { GameEventBus } from '../core/events';
 import type { Interactable, InteractionSystem } from '../interaction/InteractionSystem';
 import type { Inventory, ItemStack } from '../inventory/Inventory';
 import { ITEMS, type ToolKind } from '../inventory/items';
-import { type ChunkMaterials, CASTS, KIND_MATERIAL } from './ChunkBuilder';
-import type { Terrain } from './Terrain';
+import { type ChunkMaterials, CASTS, CHUNK_SIZE, KIND_MATERIAL } from './ChunkBuilder';
+import { type Terrain, VALLEY_HALF } from './Terrain';
 import type { VegetationLibrary, VegKind } from './vegetation';
-import { CLEARINGS, PLAYABLE, regionAt, type RegionId, RIVERS, SEA_Y } from './WorldDef';
+import { CLEARINGS, inCityBlock, PLAYABLE, regionAt, type RegionId, RIVERS, SEA_Y } from './WorldDef';
 
 export type NodeKind = 'tree' | 'rock' | 'bush' | 'grass' | 'herb' | 'sticks' | 'scrap';
 
@@ -47,7 +47,7 @@ export const NODE_DEFS: Record<NodeKind, NodeDef> = {
 /** What each node kind looks like per region, available and depleted. */
 const VISUALS: Record<NodeKind, { look: (r: RegionId) => VegKind; depleted?: VegKind; scale: [number, number]; z: number }> = {
   tree: { look: (r) => (r === 'frost' ? 'snowpine' : r === 'coast' ? 'pine' : 'broadleaf'), depleted: 'stump', scale: [0.55, 0.7], z: -1.6 },
-  rock: { look: () => 'rock', scale: [0.7, 0.95], z: -1.3 },
+  rock: { look: () => 'rock', scale: [0.7, 1.1], z: -1.3 },
   bush: { look: () => 'berrybush', depleted: 'bush', scale: [0.8, 1], z: -1.25 },
   grass: { look: (r) => (r === 'coast' || r === 'frost' ? 'reeds' : 'reeds'), scale: [0.9, 1.2], z: -1.0 },
   herb: { look: () => 'herb', scale: [1.1, 1.4], z: -1.0 },
@@ -74,7 +74,6 @@ export interface ResourceNode {
   /** Day number at which the node regrows (0 = available). */
   regrowAt: number;
   look: VegKind;
-  bucket: number;
   slot: number;
   deadSlot: number;
 }
@@ -90,16 +89,24 @@ export interface HarvestHost {
   beginWork(): boolean;
 }
 
-const BUCKET = 96;
 const SCALE0 = new THREE.Matrix4().makeScale(0, 0, 0);
+const PER_CHUNK = 16;
 
-/** Harvestable nodes along the gameplay plane, rendered in culled spatial buckets. */
+interface LoadedChunk {
+  nodes: ResourceNode[];
+  meshes: Map<VegKind, THREE.InstancedMesh>;
+  interactables: Interactable[];
+}
+
+/**
+ * Harvestable nodes scattered over the open world. Nodes are generated deterministically
+ * per terrain chunk as it streams in; only nodes the player has changed are stored.
+ */
 export class ResourceSystem {
-  readonly nodes: ResourceNode[] = [];
-  private byId = new Map<string, ResourceNode>();
-  private buckets = new Map<number, Map<VegKind, THREE.InstancedMesh>>();
   readonly group = new THREE.Group();
-  private interactables = new Map<string, Interactable>();
+  private loaded = new Map<string, LoadedChunk>();
+  /** Persistent state of harvested nodes: id → [hp, regrowAt]. */
+  private state = new Map<string, [number, number]>();
 
   constructor(
     private terrain: Terrain,
@@ -109,130 +116,148 @@ export class ResourceSystem {
     private host: HarvestHost,
   ) {
     this.group.name = 'resources';
-    this.generate();
-    this.buildMeshes();
   }
 
-  private blocked(x: number): boolean {
-    for (const r of RIVERS) if (Math.abs(x - r.x) < r.width / 2 + r.bank + 1.5) return true;
-    for (const c of CLEARINGS) if (Math.abs(x - c.x) < c.radius + 1) return true;
-    if (this.terrain.heightAt(x) < SEA_Y + 0.5) return true;
-    if (Math.abs(this.terrain.slopeAt(x)) > 0.9) return true;
+  setMaterials(m: ChunkMaterials): void {
+    this.materials = m;
+  }
+
+  private blocked(x: number, z: number): boolean {
+    const t = this.terrain;
+    for (const r of RIVERS) if (t.riverFactor(r, x, z) > 0.05) return true;
+    const az = Math.abs(z);
+    if (az < 1.6) return true;
+    for (const c of CLEARINGS) if (Math.abs(x - c.x) < c.radius + 1 && az < Math.abs(c.zBack) * 0.8 + 5) return true;
+    if (inCityBlock(x) && az < 48 && az > 5.5) return true;
+    if (az > VALLEY_HALF - 10) return true;
+    if (x < PLAYABLE.min + 4 || x > PLAYABLE.max - 4) return true;
+    if (t.heightAt3(x, z) < SEA_Y + 0.5) return true;
+    if (t.gradientAt(x, z) > 0.8) return true;
     return false;
   }
 
-  private generate(): void {
-    const rng = new Rng(hashSeed(this.terrain.seed, 991));
-    let x = PLAYABLE.min + 6;
-    let n = 0;
-    while (x < PLAYABLE.max - 6) {
-      x += rng.range(5, 12);
-      if (this.blocked(x)) continue;
+  private generate(i: number, j: number): ResourceNode[] {
+    const rng = new Rng(hashSeed(this.terrain.seed, i, j, 991));
+    const out: ResourceNode[] = [];
+    for (let k = 0; k < PER_CHUNK; k++) {
+      const x = i * CHUNK_SIZE + rng.float() * CHUNK_SIZE;
+      const z = j * CHUNK_SIZE + rng.float() * CHUNK_SIZE;
+      const roll = rng.float();
+      const scaleR = rng.float();
+      const rot = rng.range(0, Math.PI * 2);
+      if (this.blocked(x, z)) continue;
       const reg = regionAt(x).id;
-      let r = rng.float();
+      let r = roll;
       let kind: NodeKind = 'grass';
-      for (const [k, w] of TABLE[reg]) {
+      for (const [kk, w] of TABLE[reg]) {
         r -= w;
         if (r <= 0) {
-          kind = k;
+          kind = kk;
           break;
         }
       }
       const vis = VISUALS[kind];
-      const z = vis.z + rng.range(-0.25, 0.15);
-      const node: ResourceNode = {
-        id: `n${n++}`,
+      const id = `n${i}_${j}_${k}`;
+      const st = this.state.get(id);
+      out.push({
+        id,
         kind,
         x,
         y: this.terrain.heightAt3(x, z) - 0.05,
         z,
-        scale: rng.range(vis.scale[0], vis.scale[1]),
-        rot: rng.range(0, Math.PI * 2),
-        hp: NODE_DEFS[kind].hits,
-        regrowAt: 0,
+        scale: vis.scale[0] + (vis.scale[1] - vis.scale[0]) * scaleR,
+        rot,
+        hp: st ? st[0] : NODE_DEFS[kind].hits,
+        regrowAt: st ? st[1] : 0,
         look: vis.look(reg),
-        bucket: Math.floor(x / BUCKET),
         slot: -1,
         deadSlot: -1,
-      };
-      this.nodes.push(node);
-      this.byId.set(node.id, node);
-      this.register(node);
+      });
     }
+    return out;
   }
 
-  private register(node: ResourceNode): void {
-    const def = NODE_DEFS[node.kind];
-    const it: Interactable = {
-      id: node.id,
-      x: node.x,
-      y: node.y + 0.8,
-      radius: 1.3,
-      verb: def.verb,
-      label: def.label,
-      enabled: () => node.regrowAt === 0,
-      onInteract: () => this.harvest(node),
-    };
-    this.interactables.set(node.id, it);
-    this.interactions.add(it);
-  }
-
-  private buildMeshes(): void {
-    // Count instances per bucket and look.
-    const counts = new Map<number, Map<VegKind, number>>();
-    const bump = (b: number, k: VegKind) => {
-      let m = counts.get(b);
-      if (!m) counts.set(b, (m = new Map()));
-      const c = m.get(k) ?? 0;
-      m.set(k, c + 1);
+  /** Called by the chunk streamer. */
+  loadChunk(i: number, j: number): void {
+    const key = `${i},${j}`;
+    if (this.loaded.has(key)) return;
+    const nodes = this.generate(i, j);
+    const counts = new Map<VegKind, number>();
+    const bump = (k: VegKind) => {
+      const c = counts.get(k) ?? 0;
+      counts.set(k, c + 1);
       return c;
     };
-    for (const nd of this.nodes) {
-      nd.slot = bump(nd.bucket, nd.look);
+    for (const nd of nodes) {
+      nd.slot = bump(nd.look);
       const dead = VISUALS[nd.kind].depleted;
-      if (dead) nd.deadSlot = bump(nd.bucket, dead);
+      if (dead) nd.deadSlot = bump(dead);
     }
-    for (const [b, kinds] of counts) {
-      const map = new Map<VegKind, THREE.InstancedMesh>();
-      for (const [k, count] of kinds) {
-        const mesh = new THREE.InstancedMesh(this.lib.variants[k][0], this.materials[KIND_MATERIAL[k]], count);
-        mesh.castShadow = CASTS[k];
-        mesh.receiveShadow = true;
-        mesh.matrixAutoUpdate = false;
-        map.set(k, mesh);
-        this.group.add(mesh);
-      }
-      this.buckets.set(b, map);
+    const meshes = new Map<VegKind, THREE.InstancedMesh>();
+    for (const [k, count] of counts) {
+      const mesh = new THREE.InstancedMesh(this.lib.variants[k][0], this.materials[KIND_MATERIAL[k]], count);
+      mesh.castShadow = CASTS[k];
+      mesh.receiveShadow = true;
+      mesh.matrixAutoUpdate = false;
+      meshes.set(k, mesh);
+      this.group.add(mesh);
     }
-    for (const nd of this.nodes) this.refresh(nd);
-    for (const map of this.buckets.values()) {
-      for (const mesh of map.values()) {
-        mesh.instanceMatrix.needsUpdate = true;
-        mesh.computeBoundingSphere();
-      }
+    const lc: LoadedChunk = { nodes, meshes, interactables: [] };
+    this.loaded.set(key, lc);
+    for (const nd of nodes) {
+      this.refresh(lc, nd);
+      const def = NODE_DEFS[nd.kind];
+      const it: Interactable = {
+        id: nd.id,
+        x: nd.x,
+        y: nd.y + 0.8,
+        z: nd.z,
+        radius: 1.6,
+        verb: def.verb,
+        label: def.label,
+        enabled: () => nd.regrowAt === 0,
+        onInteract: () => this.harvest(lc, nd),
+      };
+      lc.interactables.push(it);
+      this.interactions.add(it);
     }
+    for (const m of meshes.values()) {
+      m.instanceMatrix.needsUpdate = true;
+      m.computeBoundingSphere();
+    }
+  }
+
+  unloadChunk(i: number, j: number): void {
+    const key = `${i},${j}`;
+    const lc = this.loaded.get(key);
+    if (!lc) return;
+    for (const m of lc.meshes.values()) {
+      this.group.remove(m);
+      m.dispose();
+    }
+    for (const it of lc.interactables) this.interactions.remove(it);
+    this.loaded.delete(key);
   }
 
   private matrix = new THREE.Matrix4();
   private quat = new THREE.Quaternion();
+  private euler = new THREE.Euler();
   private v = new THREE.Vector3();
   private s = new THREE.Vector3();
 
-  private refresh(nd: ResourceNode): void {
-    const map = this.buckets.get(nd.bucket);
-    if (!map) return;
+  private refresh(lc: LoadedChunk, nd: ResourceNode): void {
     const alive = nd.regrowAt === 0;
-    // Damaged trees lean a little as they're chopped.
-    this.quat.setFromEuler(new THREE.Euler(0, nd.rot, nd.kind === 'tree' && alive ? (NODE_DEFS.tree.hits - nd.hp) * 0.03 : 0));
+    this.euler.set(0, nd.rot, nd.kind === 'tree' && alive ? (NODE_DEFS.tree.hits - nd.hp) * 0.03 : 0);
+    this.quat.setFromEuler(this.euler);
     this.v.set(nd.x, nd.y, nd.z);
     this.s.setScalar(nd.scale);
     this.matrix.compose(this.v, this.quat, this.s);
-    const live = map.get(nd.look)!;
+    const live = lc.meshes.get(nd.look)!;
     live.setMatrixAt(nd.slot, alive ? this.matrix : SCALE0);
     live.instanceMatrix.needsUpdate = true;
     const deadKind = VISUALS[nd.kind].depleted;
     if (deadKind && nd.deadSlot >= 0) {
-      const dead = map.get(deadKind)!;
+      const dead = lc.meshes.get(deadKind)!;
       this.s.setScalar(nd.kind === 'bush' ? nd.scale * 0.85 : nd.scale * 1.3);
       this.matrix.compose(this.v, this.quat, this.s);
       dead.setMatrixAt(nd.deadSlot, alive ? SCALE0 : this.matrix);
@@ -242,7 +267,6 @@ export class ResourceSystem {
 
   private roll(y: Yield, rng: () => number): number {
     if (y.chance !== undefined && rng() > y.chance) {
-      // Bonus tools guarantee chance-based yields.
       if (!(y.bonus && this.host.tool(y.bonus))) return 0;
     }
     let q = y.min + Math.floor(rng() * (y.max - y.min + 1));
@@ -250,7 +274,7 @@ export class ResourceSystem {
     return q;
   }
 
-  harvest(nd: ResourceNode): void {
+  private harvest(lc: LoadedChunk, nd: ResourceNode): void {
     const def = NODE_DEFS[nd.kind];
     const h = this.host;
     if (def.requires && !h.tool(def.requires)) {
@@ -261,13 +285,11 @@ export class ResourceSystem {
     if (!h.beginWork()) return;
     const tool = def.requires ? h.tool(def.requires) : def.faster ? h.tool(def.faster) : null;
     if (tool) h.wearTool(tool);
-    const dmg = def.faster && h.tool(def.faster) ? 2 : 1;
-    nd.hp -= dmg;
+    nd.hp -= def.faster && h.tool(def.faster) ? 2 : 1;
     h.events.emit('sfx', { name: def.sfx, x: nd.x });
-    const rng = Math.random;
     const give = (list: Yield[]) => {
       for (const y of list) {
-        const q = this.roll(y, rng);
+        const q = this.roll(y, Math.random);
         if (q <= 0) continue;
         const left = h.inventory.add(y.id, q);
         if (q - left > 0) h.events.emit('item:gained', { id: y.id, qty: q - left });
@@ -280,41 +302,41 @@ export class ResourceSystem {
       nd.hp = def.hits;
       nd.regrowAt = h.day() + def.respawnDays;
     }
-    this.refresh(nd);
+    this.state.set(nd.id, [nd.hp, nd.regrowAt]);
+    this.refresh(lc, nd);
   }
 
   /** Regrow nodes whose time has come. */
   update(day: number): void {
-    for (const nd of this.nodes) {
-      if (nd.regrowAt > 0 && day >= nd.regrowAt) {
-        nd.regrowAt = 0;
-        nd.hp = NODE_DEFS[nd.kind].hits;
-        this.refresh(nd);
+    for (const [id, st] of this.state) if (st[1] > 0 && day >= st[1]) this.state.delete(id);
+    for (const lc of this.loaded.values()) {
+      for (const nd of lc.nodes) {
+        if (nd.regrowAt > 0 && day >= nd.regrowAt) {
+          nd.regrowAt = 0;
+          nd.hp = NODE_DEFS[nd.kind].hits;
+          this.refresh(lc, nd);
+        }
       }
     }
   }
 
   serialize(): Record<string, [number, number]> {
-    const out: Record<string, [number, number]> = {};
-    for (const nd of this.nodes) if (nd.regrowAt > 0 || nd.hp < NODE_DEFS[nd.kind].hits) out[nd.id] = [nd.hp, nd.regrowAt];
-    return out;
+    return Object.fromEntries(this.state);
   }
 
   deserialize(data: Record<string, unknown>): void {
-    for (const nd of this.nodes) {
-      const d = data[nd.id];
-      if (Array.isArray(d) && typeof d[0] === 'number' && typeof d[1] === 'number') {
-        nd.hp = d[0];
-        nd.regrowAt = d[1];
-      } else {
-        nd.hp = NODE_DEFS[nd.kind].hits;
-        nd.regrowAt = 0;
-      }
-      this.refresh(nd);
+    this.state.clear();
+    for (const [id, d] of Object.entries(data)) {
+      if (Array.isArray(d) && typeof d[0] === 'number' && typeof d[1] === 'number') this.state.set(id, [d[0], d[1]]);
     }
-  }
-
-  get(id: string): ResourceNode | undefined {
-    return this.byId.get(id);
+    for (const [key, lc] of this.loaded) {
+      for (const nd of lc.nodes) {
+        const st = this.state.get(nd.id);
+        nd.hp = st ? st[0] : NODE_DEFS[nd.kind].hits;
+        nd.regrowAt = st ? st[1] : 0;
+        this.refresh(lc, nd);
+      }
+      void key;
+    }
   }
 }

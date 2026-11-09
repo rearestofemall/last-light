@@ -2,9 +2,9 @@ import * as THREE from 'three';
 import { damp } from '../core/math';
 import type { Settings } from '../core/Settings';
 import { type Atmosphere, ATMOSPHERE_MORNING, computeAtmosphere, createAtmosphere } from './Atmosphere';
-import { CAMERA_DISTANCE, type CameraRig } from './CameraRig';
+import type { CameraRig } from './CameraRig';
+import { FarMountains } from './FarMountains';
 import { Lighting } from './Lighting';
-import { Parallax } from './Parallax';
 import { Particles } from './Particles';
 import { Sky } from './Sky';
 import { sharedUniforms } from './materials';
@@ -33,7 +33,7 @@ const INTERIOR_FOG = new THREE.Color(0x07080a);
 export class Environment {
   readonly sky = new Sky();
   readonly lighting = new Lighting();
-  readonly parallax: Parallax;
+  readonly mountains: FarMountains;
   readonly particles: Particles;
   readonly weatherFx: WeatherFx;
   readonly fog: THREE.Fog;
@@ -56,8 +56,10 @@ export class Environment {
     scene.add(this.lighting.group);
     scene.add(rig.camera);
     rig.camera.add(this.sky.mesh);
-    this.parallax = new Parallax(seed, worldMin, worldMax);
-    rig.camera.add(this.parallax.group);
+    this.mountains = new FarMountains(seed);
+    scene.add(this.mountains.group);
+    void worldMin;
+    void worldMax;
     this.particles = new Particles(320);
     scene.add(this.particles.points);
     this.weatherFx = new WeatherFx();
@@ -77,10 +79,40 @@ export class Environment {
     this.sky.apply(a);
     this.lighting.apply(a);
     this.fog.color.copy(a.fog);
-    this.fog.near = Math.max(1, CAMERA_DISTANCE + a.fogNear);
-    this.fog.far = CAMERA_DISTANCE + a.fogFar;
-    this.parallax.setTint(a.layerTint);
+    // Presets are authored for the 2.5D view; map them onto the streamed 3D range.
+    this.fog.near = Math.max(1, a.fogNear * 0.7 + 30);
+    this.fog.far = Math.min(175, a.fogFar * 0.7 + 20);
+    this.mountains.setTint(a.layerTint);
     this.renderer.toneMappingExposure = a.exposure;
+  }
+
+  private tmp = new THREE.Vector3();
+
+  /** Screen position of a direction in the sky (uv), or off-screen if behind the camera. */
+  private projectDir(dir: THREE.Vector3, out: THREE.Vector2): void {
+    const cam = this.rig.camera;
+    const p = this.tmp.copy(dir).multiplyScalar(400).add(cam.position).project(cam);
+    if (p.z > 1 || p.z < -1) out.set(-5, -5);
+    else out.set((p.x + 1) / 2, (p.y + 1) / 2);
+  }
+
+  private placeSkyBodies(a: { sunDir: THREE.Vector3; sunScreen: THREE.Vector2; moonScreen: THREE.Vector2 }): void {
+    const sun = this.tmp.copy(a.sunDir);
+    this.projectDir(sun.clone(), a.sunScreen);
+    this.projectDir(sun.clone().set(-sun.x, Math.max(0.35, sun.y), -sun.z), a.moonScreen);
+  }
+
+  /** Where the horizon falls on screen for the current camera pitch. */
+  private horizonUv(): number {
+    const cam = this.rig.camera;
+    const fwd = new THREE.Vector3();
+    cam.getWorldDirection(fwd);
+    fwd.y = 0;
+    fwd.normalize();
+    const p = this.tmp.copy(fwd).multiplyScalar(800).add(cam.position);
+    p.y = cam.position.y - 25;
+    p.project(cam);
+    return Math.min(0.95, Math.max(0.02, (p.y + 1) / 2));
   }
 
   update(dt: number, aspect: number, pixelRatio: number, input: EnvironmentInput): void {
@@ -103,13 +135,15 @@ export class Environment {
       a.darkness = Math.max(a.darkness, k * 0.85);
       a.exposure = a.exposure * (1 - k) + 1.35 * k;
     }
+    this.placeSkyBodies(a);
     this.apply(a);
     this.sky.mesh.visible = this.interiorK < 0.98;
-    this.parallax.group.visible = this.interiorK < 0.98;
+    this.mountains.group.visible = this.interiorK < 0.98;
     const f = this.rig.focus;
-    this.sky.update(this.time, f.x, aspect);
+    this.sky.update(this.time, this.rig.yaw * 0.6 + f.x * 0.002, aspect);
+    this.sky.setHorizon(this.horizonUv());
     this.lighting.update(f);
-    this.parallax.update(f.x, f.y);
+    this.mountains.update(this.rig.camera.position, f.y - 1.6);
     this.particles.update(f, pixelRatio, this.rig.viewHeight);
     this.particles.points.visible = !input.interior && input.rain < 0.3 && input.snow < 0.3;
     this.particles.setNight(a.darkness);
