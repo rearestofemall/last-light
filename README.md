@@ -1,10 +1,12 @@
 # The Last Light — Download
 
-**[TheLastLight.exe](TheLastLight.exe)** — the full game for Windows 10 / 11 (64-bit), one 7.5 MB file. No installer.
+**[TheLastLight.exe](TheLastLight.exe)** — the full game for Windows 10 / 11 (64-bit), one 7.6 MB file. No installer.
 
 1. Download `TheLastLight.exe` (on GitHub: click the file, then **Download raw file**).
 2. Double-click it. The game opens in its own window.
 3. Windows may show **"Windows protected your PC"** because the file isn't code-signed: click **More info → Run anyway**.
+
+Choose **Story** to follow J.'s trail, or **Free Play** for an open sandbox (pick a region, survival pace, starter kit, all recipes, no wolves).
 
 Saves are kept in `%APPDATA%\TheLastLight` and survive updates. Delete that folder to start completely fresh.
 
