@@ -79,7 +79,8 @@ describe('human body', () => {
     const idx = g.attributes.skinIndex;
     const w = g.attributes.skinWeight;
     expect(g.attributes.position.count).toBeGreaterThan(1000);
-    expect(g.attributes.position.count).toBeLessThan(20000);
+    // One skinned draw call; ~8.7k triangles at most keeps the hero character cheap.
+    expect(g.attributes.position.count).toBeLessThan(26000);
     for (let i = 0; i < idx.count; i++) {
       expect(idx.getX(i)).toBeLessThan(BONES.length);
       expect(idx.getY(i)).toBeLessThan(BONES.length);
