@@ -18,7 +18,18 @@ npm test           # unit tests
 
 Add `?viewer` to the URL (e.g. http://localhost:5173/?viewer) to open the character viewer. It shows the
 survivor on a turntable, with buttons for every animation, held items, cold/tired/death states and a slope for
-foot IK.
+foot IK. `?viewer=animals` opens a lineup of randomly varied wildlife with every behaviour (reroll per region).
+
+### Windows build
+
+The ready-to-play `TheLastLight.exe` is on the `Download` branch. To rebuild it (Node + Go 1.22+, from any OS):
+
+```bash
+./scripts/build-exe.sh   # → release/TheLastLight.exe
+```
+
+The launcher (`desktop/`) embeds the production build, serves it on a private localhost port and shows it in a
+native Microsoft Edge WebView2 window; saves live in `%APPDATA%\TheLastLight`.
 
 ## Controls
 
