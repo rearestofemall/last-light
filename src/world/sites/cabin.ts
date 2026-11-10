@@ -59,7 +59,7 @@ function styleMats(mats: SiteMaterials, style: HouseStyle) {
       break;
     }
     case 'brick':
-      s = { wall: tint(mats.stone, 0xb46f55), trim: tint(mats.concrete, 0x8d8a83), roof: mats.concrete };
+      s = { wall: tint(mats.brick, 0xf2e6de), trim: tint(mats.concrete, 0x8d8a83), roof: mats.concrete };
       break;
     case 'concrete':
       s = { wall: tint(mats.concrete, 0xb2aea4), trim: tint(mats.concrete, 0x77746d), roof: tint(mats.concrete, 0x6c6a66) };

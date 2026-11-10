@@ -3,6 +3,7 @@ import { clamp, lerp, smoothstep } from '../core/math';
 import { hashSeed, Rng } from '../core/rng';
 import type { QualityProfile } from '../core/Settings';
 import { addWindSway, vertexColorMaterial } from '../render/materials';
+import { groundDetail, stoneDetail } from '../render/surface';
 import { type Terrain, VALLEY_HALF } from './Terrain';
 import type { VegetationLibrary, VegKind } from './vegetation';
 import { CLEARINGS, inCityBlock, REGIONS, regionAt, regionWeight, type RegionId, RIVERS, SEA_Y } from './WorldDef';
@@ -32,13 +33,16 @@ export function createChunkMaterials(standard: boolean): ChunkMaterials {
   const terrain = standard
     ? new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0 })
     : new THREE.MeshLambertMaterial({ vertexColors: true });
+  groundDetail(terrain);
+  const solid = vertexColorMaterial(standard);
+  stoneDetail(solid);
   return {
     terrain,
     skirt: new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }),
     tree: addWindSway(vertexColorMaterial(standard), 0.0021, `tree-${standard}`, true, true),
     shrub: addWindSway(vertexColorMaterial(standard), 0.05, `shrub-${standard}`, true, true),
     grass: addWindSway(vertexColorMaterial(standard, { flat: false }), 0.3, `grass-${standard}`),
-    solid: vertexColorMaterial(standard),
+    solid,
   };
 }
 

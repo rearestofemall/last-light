@@ -23,6 +23,7 @@ export class PlayerActions {
   private heldLight: LightSource;
   private heldId: string | null = null;
   private heldMesh: THREE.Object3D | null = null;
+  private hangQ = new THREE.Quaternion();
   private torchFire = new FireVisual(0.42, 0xffa04a, true);
   private workTimer = 0;
   private swingTimer = 0;
@@ -234,6 +235,9 @@ export class PlayerActions {
     }
     this.torchFire.set(lit && id === 'torch', 1, 1);
     if (this.heldMesh && id === 'lantern') {
+      // A lantern hangs from its handle: cancel the hand's rotation so it stays upright.
+      this.model.handAnchor.getWorldQuaternion(this.hangQ);
+      this.heldMesh.quaternion.copy(this.hangQ).invert();
       const glow = this.heldMesh.getObjectByName('glow') as THREE.Mesh | undefined;
       if (glow) (glow.material as THREE.MeshBasicMaterial).color.setHex(lit ? 0xffd27a : 0x2a2620);
     }
@@ -257,45 +261,104 @@ export class PlayerActions {
 }
 
 const hm = (c: number, emissive = 0) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.8, emissive, emissiveIntensity: emissive ? 1 : 0 });
-const M = { wood: hm(0x6b4a2e), stone: hm(0x8a8780), metal: hm(0x8f979e), dark: hm(0x2c2a28) };
+const flat = (c: number) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.85, flatShading: true });
+const M = {
+  wood: hm(0x6b4a2e),
+  stone: flat(0x8a8780),
+  metal: new THREE.MeshStandardMaterial({ color: 0x8f979e, roughness: 0.45, metalness: 0.6, flatShading: true }),
+  dark: hm(0x2c2a28),
+  leather: hm(0x5a3a22),
+  cord: hm(0xb8a27a),
+  cloth: hm(0x7a6a52),
+};
 
+/**
+ * Hand-held items. The grip runs through the fist along +z; each tool is built along +z in
+ * a holder tilted up a little, so its head sits ahead of and above the hand.
+ */
 function heldModel(id: string, fire: FireVisual): THREE.Object3D | null {
   const g = new THREE.Group();
-  const add = (geo: THREE.BufferGeometry, m: THREE.Material, x: number, y: number, z: number) => {
+  const holder = new THREE.Group();
+  g.add(holder);
+  const add = (geo: THREE.BufferGeometry, m: THREE.Material, x: number, y: number, z: number, parent: THREE.Object3D = holder) => {
     const mesh = new THREE.Mesh(geo, m);
     mesh.position.set(x, y, z);
     mesh.castShadow = true;
-    g.add(mesh);
+    parent.add(mesh);
     return mesh;
   };
+  /** A cylinder lying along z from z0 to z1. */
+  const rod = (r0: number, r1: number, z0: number, z1: number, m: THREE.Material, seg = 6) => add(new THREE.CylinderGeometry(r1, r0, z1 - z0, seg).rotateX(Math.PI / 2), m, 0, 0, (z0 + z1) / 2);
+  /** Lashing: a few thin rings around the haft. */
+  const wraps = (z0: number, z1: number, r: number, m: THREE.Material) => {
+    for (let z = z0; z <= z1; z += 0.022) add(new THREE.TorusGeometry(r, 0.008, 4, 8), m, 0, 0, z);
+  };
   switch (id) {
-    case 'torch':
-      add(new THREE.CylinderGeometry(0.03, 0.04, 0.6, 6), M.wood, 0, 0, 0.12).rotation.x = Math.PI / 2 - 0.5;
-      add(new THREE.CylinderGeometry(0.06, 0.05, 0.12, 6), M.dark, 0, 0.13, 0.36).rotation.x = Math.PI / 2 - 0.5;
-      fire.group.position.set(0, 0.16, 0.4);
-      g.add(fire.group);
-      break;
-    case 'lantern': {
-      add(new THREE.CylinderGeometry(0.01, 0.01, 0.15, 4), M.metal, 0, -0.05, 0);
-      add(new THREE.CylinderGeometry(0.09, 0.1, 0.05, 8), M.metal, 0, -0.14, 0);
-      const glow = add(new THREE.CylinderGeometry(0.075, 0.075, 0.16, 8), new THREE.MeshBasicMaterial({ color: 0xffd27a }), 0, -0.25, 0);
-      glow.name = 'glow';
-      glow.castShadow = false;
-      add(new THREE.CylinderGeometry(0.1, 0.1, 0.04, 8), M.metal, 0, -0.35, 0);
+    case 'torch': {
+      holder.rotation.x = -0.5;
+      rod(0.035, 0.028, -0.18, 0.42, M.wood);
+      // Pitch-soaked cloth head.
+      add(new THREE.CylinderGeometry(0.055, 0.045, 0.13, 7).rotateX(Math.PI / 2), M.dark, 0, 0, 0.42);
+      wraps(0.37, 0.46, 0.05, M.cloth);
+      fire.group.position.set(0, 0.03, 0.5);
+      holder.add(fire.group);
       break;
     }
-    case 'axe':
-      add(new THREE.CylinderGeometry(0.025, 0.03, 0.75, 6), M.wood, 0, 0, 0.2).rotation.x = Math.PI / 2 - 0.3;
-      add(new THREE.BoxGeometry(0.05, 0.2, 0.16), M.stone, 0, 0.17, 0.52);
+    case 'lantern': {
+      // Hangs from the fist by its ring handle.
+      add(new THREE.TorusGeometry(0.05, 0.008, 4, 10, Math.PI), M.metal, 0, -0.03, 0, g).rotation.set(0, Math.PI / 2, Math.PI);
+      add(new THREE.CylinderGeometry(0.045, 0.09, 0.06, 8), M.metal, 0, -0.12, 0, g);
+      add(new THREE.CylinderGeometry(0.1, 0.1, 0.02, 8), M.dark, 0, -0.15, 0, g);
+      const glow = add(new THREE.CylinderGeometry(0.07, 0.07, 0.16, 8), new THREE.MeshBasicMaterial({ color: 0xffd27a }), 0, -0.24, 0, g);
+      glow.name = 'glow';
+      glow.castShadow = false;
+      for (let i = 0; i < 4; i++) {
+        const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
+        add(new THREE.BoxGeometry(0.014, 0.18, 0.014), M.metal, Math.cos(a) * 0.08, -0.24, Math.sin(a) * 0.08, g);
+      }
+      add(new THREE.CylinderGeometry(0.1, 0.09, 0.04, 8), M.metal, 0, -0.34, 0, g);
       break;
-    case 'pickaxe':
-      add(new THREE.CylinderGeometry(0.025, 0.03, 0.75, 6), M.wood, 0, 0, 0.2).rotation.x = Math.PI / 2 - 0.3;
-      add(new THREE.BoxGeometry(0.04, 0.5, 0.06), M.metal, 0, 0.17, 0.52);
+    }
+    case 'axe': {
+      holder.rotation.x = -0.3;
+      rod(0.03, 0.024, -0.1, 0.62, M.wood);
+      // Knapped stone head, wedge-shaped, lashed on with rawhide.
+      const head = new THREE.BoxGeometry(0.05, 0.2, 0.13, 1, 2, 1);
+      const p = head.attributes.position as THREE.BufferAttribute;
+      for (let i = 0; i < p.count; i++) {
+        if (p.getY(i) > 0.05) p.setX(i, p.getX(i) * 0.25); // sharpened edge
+        if (p.getY(i) < -0.05) p.setZ(i, p.getZ(i) * 0.7);
+      }
+      add(head, M.stone, 0, 0.08, 0.55);
+      wraps(0.5, 0.6, 0.035, M.leather);
       break;
-    case 'knife':
-      add(new THREE.BoxGeometry(0.03, 0.04, 0.12), M.wood, 0, 0, 0.04);
-      add(new THREE.BoxGeometry(0.015, 0.05, 0.2), M.stone, 0, 0, 0.19);
+    }
+    case 'pickaxe': {
+      holder.rotation.x = -0.3;
+      rod(0.03, 0.024, -0.1, 0.62, M.wood);
+      // Double-ended scrap-metal head: a point up, a chisel down.
+      add(new THREE.BoxGeometry(0.045, 0.1, 0.06), M.metal, 0, 0, 0.56);
+      add(new THREE.ConeGeometry(0.03, 0.22, 4), M.metal, 0, 0.16, 0.56).rotation.y = Math.PI / 4;
+      const chisel = add(new THREE.BoxGeometry(0.06, 0.18, 0.02), M.metal, 0, -0.13, 0.56);
+      chisel.rotation.x = 0.15;
+      wraps(0.5, 0.53, 0.034, M.leather);
+      wraps(0.59, 0.61, 0.034, M.leather);
       break;
+    }
+    case 'knife': {
+      // Cord-wrapped grip, knapped blade, small pommel.
+      rod(0.022, 0.02, -0.05, 0.07, M.wood);
+      wraps(-0.04, 0.06, 0.024, M.cord);
+      add(new THREE.SphereGeometry(0.026, 6, 4), M.dark, 0, 0, -0.06);
+      const blade = new THREE.BoxGeometry(0.012, 0.045, 0.2, 1, 1, 3);
+      const p = blade.attributes.position as THREE.BufferAttribute;
+      for (let i = 0; i < p.count; i++) {
+        const t = (p.getZ(i) + 0.1) / 0.2;
+        p.setY(i, p.getY(i) * (1 - t * 0.85) + t * 0.008);
+      }
+      add(blade, M.stone, 0, 0, 0.17);
+      break;
+    }
     default:
       return null;
   }

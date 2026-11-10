@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { triplanar } from '../render/surface';
 import { plankTexture, shingleTexture, stoneTexture, worldUvBox } from '../render/textures';
 
 export const CELL = 2;
@@ -46,6 +47,7 @@ export function pieceMaterials(): Record<string, THREE.MeshStandardMaterial> {
     glass: std({ color: 0x1d2a30, roughness: 0.2, metalness: 0.3 }),
     char: std({ color: 0x1c1a19 }),
   };
+  for (const m of Object.values(mats)) if (m.map) triplanar(m);
   return mats;
 }
 

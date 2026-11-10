@@ -6,7 +6,7 @@ import type { ContainerRegistry, Inventory } from '../../inventory/Inventory';
 import type { ToolKind } from '../../inventory/items';
 import { fireInteractable } from '../../building/BuildSystem';
 import { type LightKind, type LightSource, type LightSystem, makeLight } from '../../lighting/LightSystem';
-import { paperTexture, plankTexture, shingleTexture, stoneTexture, worldUvBox } from '../../render/textures';
+import { asphaltTexture, brickTexture, concreteTexture, metalTexture, paperTexture, plankTexture, shingleTexture, stoneTexture, tileTexture, worldUvBox } from '../../render/textures';
 import type { StoryState } from '../../story/StoryState';
 import { INSPECT } from '../../story/notes';
 import type { Surface, Terrain } from '../Terrain';
@@ -45,21 +45,25 @@ export function createSiteMaterials(): SiteMaterials {
     roof: std({ map: shingleTexture() }),
     cloth: std({ color: 0x66744a, side: THREE.DoubleSide, roughness: 1 }),
     fabric: std({ color: 0x8a3b2b, roughness: 1 }),
-    metal: std({ color: 0x5d6166, metalness: 0.55, roughness: 0.55 }),
-    rust: std({ color: 0x7b4b33, metalness: 0.3, roughness: 0.85 }),
+    metal: std({ map: metalTexture(), color: 0x8a9096, metalness: 0.5, roughness: 0.55 }),
+    rust: std({ map: metalTexture(), color: 0x9a5a3a, metalness: 0.3, roughness: 0.85 }),
     paper: std({ map: paperTexture(), emissive: 0x3a3426, emissiveIntensity: 0.6, roughness: 1 }),
     ash: std({ color: 0x3a3532, roughness: 1 }),
     charcoal: std({ color: 0x1c1a19, roughness: 1 }),
-    asphalt: std({ color: 0x3b3b3d, roughness: 0.95 }),
-    concrete: std({ color: 0x9a978f, roughness: 0.95 }),
-    rock: std({ color: 0x7a766d, roughness: 0.95, flatShading: true }),
+    asphalt: std({ map: asphaltTexture(), roughness: 0.95 }),
+    concrete: std({ map: concreteTexture(), color: 0xe6e3dc, roughness: 0.95 }),
+    rock: (() => {
+      const m = std({ color: 0x7a766d, roughness: 0.95, flatShading: true });
+      m.userData.stone = true;
+      return m;
+    })(),
     bone: std({ color: 0xd8cfb8, roughness: 0.8 }),
     glass: std({ color: 0x1d2a30, roughness: 0.2, metalness: 0.3 }),
     rug: std({ color: 0x6e3a2a, roughness: 1 }),
-    brick: std({ map: stoneTexture(), color: 0xb46f55 }),
+    brick: std({ map: brickTexture() }),
     white: std({ color: 0xe9e6de, roughness: 0.7 }),
     red: std({ color: 0xa8382c, roughness: 0.7 }),
-    tile: std({ map: stoneTexture(), color: 0xd6d3c8, roughness: 0.6 }),
+    tile: std({ map: tileTexture(), roughness: 0.6 }),
     books: [0x6b4b2e, 0x3f5a6b, 0x7a6a3a, 0x5a3a3a].map((c) => std({ color: c })),
   };
 }

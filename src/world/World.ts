@@ -16,6 +16,7 @@ import { city, coast, frost } from './sites/regions';
 import { Terrain, VALLEY_HALF } from './Terrain';
 import { generatePois, type Poi } from './sites/poi';
 import { bakeStatic } from './sites/bake';
+import { applySurfaces } from '../render/surface';
 import { VegetationLibrary } from './vegetation';
 import { createRiverMesh, createWaterMaterial } from './Water';
 import { PLAYABLE, RIVERS, SEA_Y, WORLD_SEED } from './WorldDef';
@@ -119,6 +120,8 @@ export class World {
     // Fading walls now live in merged meshes: point the fade system at those.
     for (const f of this.fadeables) f.meshes = [...new Set(f.meshes.map((m) => baked.replaced.get(m) ?? m))];
     console.info(`[world] baked ${baked.before} site meshes into ${baked.after}`);
+    // World-space texturing and relief on every tiled surface.
+    applySurfaces(sites);
     // Sites are static: freeze their transforms.
     sites.updateMatrixWorld(true);
     sites.traverse((o) => (o.matrixAutoUpdate = false));

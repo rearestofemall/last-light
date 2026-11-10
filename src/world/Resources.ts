@@ -94,7 +94,8 @@ const PER_CHUNK = 16;
 
 interface LoadedChunk {
   nodes: ResourceNode[];
-  meshes: Map<VegKind, THREE.InstancedMesh>;
+  /** Keyed by `kind#variant`: nodes of one kind use several shapes. */
+  meshes: Map<string, THREE.InstancedMesh>;
   interactables: Interactable[];
 }
 
@@ -182,24 +183,26 @@ export class ResourceSystem {
     const key = `${i},${j}`;
     if (this.loaded.has(key)) return;
     const nodes = this.generate(i, j);
-    const counts = new Map<VegKind, number>();
-    const bump = (k: VegKind) => {
+    const counts = new Map<string, number>();
+    const bump = (k: string) => {
       const c = counts.get(k) ?? 0;
       counts.set(k, c + 1);
       return c;
     };
     for (const nd of nodes) {
-      nd.slot = bump(nd.look);
+      nd.slot = bump(this.liveKey(nd));
       const dead = VISUALS[nd.kind].depleted;
-      if (dead) nd.deadSlot = bump(dead);
+      if (dead) nd.deadSlot = bump(this.deadKey(nd, dead));
     }
-    const meshes = new Map<VegKind, THREE.InstancedMesh>();
-    for (const [k, count] of counts) {
-      const mesh = new THREE.InstancedMesh(this.lib.variants[k][0], this.materials[KIND_MATERIAL[k]], count);
+    const meshes = new Map<string, THREE.InstancedMesh>();
+    for (const [key, count] of counts) {
+      const [kk, vv] = key.split('#');
+      const k = kk as VegKind;
+      const mesh = new THREE.InstancedMesh(this.lib.variants[k][Number(vv)], this.materials[KIND_MATERIAL[k]], count);
       mesh.castShadow = CASTS[k];
       mesh.receiveShadow = true;
       mesh.matrixAutoUpdate = false;
-      meshes.set(k, mesh);
+      meshes.set(key, mesh);
       this.group.add(mesh);
     }
     const lc: LoadedChunk = { nodes, meshes, interactables: [] };
@@ -239,6 +242,19 @@ export class ResourceSystem {
     this.loaded.delete(key);
   }
 
+  /** Deterministic shape variant for a node (from its id). */
+  private variantOf(nd: ResourceNode, kind: VegKind): number {
+    let h = 0;
+    for (let i = 0; i < nd.id.length; i++) h = (h * 31 + nd.id.charCodeAt(i)) | 0;
+    return Math.abs(h) % Math.min(3, this.lib.variants[kind].length);
+  }
+  private liveKey(nd: ResourceNode): string {
+    return `${nd.look}#${this.variantOf(nd, nd.look)}`;
+  }
+  private deadKey(nd: ResourceNode, dead: VegKind): string {
+    return `${dead}#${this.variantOf(nd, dead)}`;
+  }
+
   private matrix = new THREE.Matrix4();
   private quat = new THREE.Quaternion();
   private euler = new THREE.Euler();
@@ -252,12 +268,12 @@ export class ResourceSystem {
     this.v.set(nd.x, nd.y, nd.z);
     this.s.setScalar(nd.scale);
     this.matrix.compose(this.v, this.quat, this.s);
-    const live = lc.meshes.get(nd.look)!;
+    const live = lc.meshes.get(this.liveKey(nd))!;
     live.setMatrixAt(nd.slot, alive ? this.matrix : SCALE0);
     live.instanceMatrix.needsUpdate = true;
     const deadKind = VISUALS[nd.kind].depleted;
     if (deadKind && nd.deadSlot >= 0) {
-      const dead = lc.meshes.get(deadKind)!;
+      const dead = lc.meshes.get(this.deadKey(nd, deadKind))!;
       this.s.setScalar(nd.kind === 'bush' ? nd.scale * 0.85 : nd.scale * 1.3);
       this.matrix.compose(this.v, this.quat, this.s);
       dead.setMatrixAt(nd.deadSlot, alive ? SCALE0 : this.matrix);

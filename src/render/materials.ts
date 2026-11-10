@@ -41,16 +41,22 @@ export function addWindSway<T extends THREE.Material>(material: T, strength: num
     if (foliage) {
       // Seasonal tint for bright, green-dominant colours (deciduous leaves and grass).
       // Dark conifer needles, bark and berries keep their colour.
-      shader.fragmentShader = 'uniform vec3 uFoliage;\nuniform float uFoliageAmt;\n' + shader.fragmentShader.replace(
+      // Every plant turns at its own pace and to its own colour: some stay green, some go
+      // gold, some go red (vFolVar is a per-plant random from its phase).
+      shader.fragmentShader = 'uniform vec3 uFoliage;\nuniform float uFoliageAmt;\nvarying float vFolVar;\n' + shader.fragmentShader.replace(
         '#include <color_fragment>',
         `#include <color_fragment>
         float luma = dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11));
         float leafy = smoothstep(0.01, 0.06, diffuseColor.g - max(diffuseColor.r, diffuseColor.b)) * smoothstep(0.07, 0.12, luma);
-        diffuseColor.rgb = mix(diffuseColor.rgb, uFoliage * luma * 2.3, leafy * uFoliageAmt);`,
+        vec3 fol = uFoliage;
+        if (vFolVar > 0.68) fol *= vec3(1.18, 0.62, 0.55);
+        else if (vFolVar > 0.36) fol *= vec3(1.05, 1.12, 0.62);
+        float turn = uFoliageAmt * (0.15 + 0.85 * fract(vFolVar * 7.31));
+        diffuseColor.rgb = mix(diffuseColor.rgb, fol * luma * 2.3, leafy * turn);`,
       );
     }
     shader.vertexShader =
-      'uniform float uTime;\nuniform float uWind;\nattribute float aH;\nattribute float aPhase;\n' +
+      'uniform float uTime;\nuniform float uWind;\nattribute float aH;\nattribute float aPhase;\nvarying float vFolVar;\n' +
       shader.vertexShader.replace(
         '#include <begin_vertex>',
         `#include <begin_vertex>
@@ -60,6 +66,7 @@ export function addWindSway<T extends THREE.Material>(material: T, strength: num
         #else
           float ph = aPhase;
         #endif
+        vFolVar = fract(sin(ph * 12.9898 + 4.1) * 43758.5453);
         float hgt = aH;
         float gust = 0.6 + 0.4 * sin(uTime * 0.31 + ph * 0.054);
         float sway = (sin(uTime * 1.35 + ph) * 0.65 + sin(uTime * 3.1 + ph * 1.7) * 0.22) * uWind * gust * ${strength.toFixed(5)} * hgt * hgt;

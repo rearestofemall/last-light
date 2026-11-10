@@ -5,6 +5,7 @@ import { type Atmosphere, ATMOSPHERE_MORNING, computeAtmosphere, createAtmospher
 import type { CameraRig } from './CameraRig';
 import { FarMountains } from './FarMountains';
 import { Lighting } from './Lighting';
+import { AmbientLife } from './AmbientLife';
 import { Particles } from './Particles';
 import { Sky } from './Sky';
 import { sharedUniforms } from './materials';
@@ -35,6 +36,7 @@ export class Environment {
   readonly lighting = new Lighting();
   readonly mountains: FarMountains;
   readonly particles: Particles;
+  readonly life = new AmbientLife();
   readonly weatherFx: WeatherFx;
   readonly fog: THREE.Fog;
   readonly atmosphere: Atmosphere = createAtmosphere();
@@ -62,6 +64,7 @@ export class Environment {
     void worldMax;
     this.particles = new Particles(320);
     scene.add(this.particles.points);
+    scene.add(this.life.group);
     this.weatherFx = new WeatherFx();
     scene.add(this.weatherFx.group);
     this.applySettings();
@@ -147,6 +150,13 @@ export class Environment {
     this.particles.update(f, pixelRatio, this.rig.viewHeight);
     this.particles.points.visible = !input.interior && input.rain < 0.3 && input.snow < 0.3;
     this.particles.setNight(a.darkness);
+    // Falling leaves in autumn woods; butterflies on warm, calm, dry days.
+    const outdoors = !input.interior;
+    const calm = (1 - Math.min(1, input.rain * 3)) * (1 - Math.min(1, input.snow * 3));
+    const leaves = outdoors ? Math.min(1, input.foliageAmount * 1.5) * (1 - input.coldness) * (0.5 + input.wind * 0.5) : 0;
+    const day = Math.max(0, Math.min(1, input.sunElevation * 4));
+    const flies = outdoors ? day * calm * (1 - input.coldness) * (1 - input.wind * 0.6) * (this.settings.profile.particles > 100 ? 1 : 0.5) : 0;
+    this.life.update(dt, f, leaves, flies, 0.35 + (1 - a.darkness) * 0.75);
     this.weatherFx.update(f, input.rain, input.snow, input.wind, this.settings.profile.particles / 320, pixelRatio, this.rig.viewHeight, input.interior);
   }
 }
