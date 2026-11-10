@@ -1,3 +1,4 @@
+import type { GameMode } from '../gameplay/GameMode';
 import type { Settings } from '../core/Settings';
 
 export interface SaveSummary {
@@ -6,13 +7,15 @@ export interface SaveSummary {
   region: string;
   playTime: number;
   day: number;
+  freePlay: boolean;
 }
 
 /** What the UI is allowed to ask the game to do. The UI never owns game state. */
 export interface GameApi {
   readonly settings: Settings;
   readonly persistentSaves: boolean;
-  newGame(): Promise<void>;
+  /** Story campaign by default, or Free Play with its options. */
+  newGame(mode?: GameMode): Promise<void>;
   continueGame(): Promise<void>;
   saveGame(): Promise<boolean>;
   quitToMenu(): Promise<void>;

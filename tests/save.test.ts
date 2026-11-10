@@ -22,6 +22,7 @@ function sample(x = 12): SaveData {
     resources: { n4: [2, 0] },
     lights: { 'ranger-lamp': { fuel: 120, on: true } },
     story: { readNotes: ['j-note-1'], locations: ['campsite', 'trailhead'], flags: { 'tutorial:basics': true }, explored: [0, 1] },
+    mode: { kind: 'free', region: 'coast', pace: 'harsh', starterKit: true, allRecipes: false, peaceful: true },
     meta: { location: 'Abandoned Campsite', region: 'The Verdant Woods', day: 3 },
   };
 }
@@ -77,6 +78,19 @@ describe('save schema', () => {
     expect(v.inventory).toEqual([]);
     expect(v.structures).toEqual([]);
     expect(v.world.weather.state).toBe('clear');
+  });
+
+  it('keeps the game mode, and treats saves without one as story games', () => {
+    const back = validateSave(JSON.parse(JSON.stringify(sample())), (x) => x);
+    expect(back.mode).toEqual({ kind: 'free', region: 'coast', pace: 'harsh', starterKit: true, allRecipes: false, peaceful: true });
+    const old = JSON.parse(JSON.stringify(sample()));
+    delete old.mode;
+    expect(validateSave(old, (x) => x).mode.kind).toBe('story');
+    const junk = JSON.parse(JSON.stringify(sample()));
+    junk.mode = { kind: 'free', region: 'mars', pace: 'insane' };
+    const m = validateSave(junk, (x) => x).mode;
+    expect(m.region).toBe('woods');
+    expect(m.pace).toBe('normal');
   });
 
   it('checksum is stable', () => {

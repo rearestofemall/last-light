@@ -35,6 +35,8 @@ export const MAIN_QUEST: QuestStep[] = [
 /** Tracks progress through the main questline and announces new objectives. */
 export class Quests {
   private index = -1;
+  /** Off in Free Play: no objectives. */
+  enabled = true;
 
   constructor(
     private story: StoryState,
@@ -42,6 +44,7 @@ export class Quests {
   ) {}
 
   get current(): QuestStep | null {
+    if (!this.enabled) return null;
     return MAIN_QUEST[this.index] ?? null;
   }
 
@@ -55,6 +58,7 @@ export class Quests {
 
   /** Re-evaluates progress; steps may complete out of order, so skip anything already done. */
   update(announce = true): void {
+    if (!this.enabled) return;
     let i = 0;
     while (i < MAIN_QUEST.length && MAIN_QUEST[i].done(this.story)) i++;
     if (i !== this.index) {

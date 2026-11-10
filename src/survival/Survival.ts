@@ -57,6 +57,10 @@ export class Survival {
   sickness = 0;
   dead = false;
   deathCause = '';
+  /** Game-mode pace: multiplies hunger, thirst and tiredness drain (Free Play setting). */
+  drainMul = 1;
+  /** Game-mode pace: multiplies damage taken. */
+  damageMul = 1;
   private exhausted = false;
   private warnCooldown: Partial<Record<string, number>> = {};
   /** Temperature target the body is drifting towards (for the HUD's trend arrow). */
@@ -104,6 +108,7 @@ export class Survival {
 
   damage(amount: number, cause: string): void {
     if (this.dead || this.frozen || amount <= 0) return;
+    amount *= this.damageMul;
     this.vitals.health = Math.max(0, this.vitals.health - amount);
     this.events.emit('player:damaged', { amount, cause });
     if (this.vitals.health <= 0) this.die(cause);
@@ -133,9 +138,10 @@ export class Survival {
 
     // Hunger & thirst. Activity and heat make them fall faster.
     const exertion = c.sprinting ? 1.8 : c.swimming ? 1.6 : c.moving ? 1.15 : 1;
-    v.hunger -= R.hungerPerSec * exertion * (v.warmth < 25 ? 1.3 : 1) * dt;
-    v.thirst -= R.thirstPerSec * exertion * (v.warmth > 80 ? 1.6 : 1) * (this.sickness > 0 ? 1.5 : 1) * dt;
-    v.energy -= R.energyPerSec * (c.sprinting ? 1.6 : 1) * dt;
+    const pace = this.drainMul;
+    v.hunger -= R.hungerPerSec * exertion * (v.warmth < 25 ? 1.3 : 1) * pace * dt;
+    v.thirst -= R.thirstPerSec * exertion * (v.warmth > 80 ? 1.6 : 1) * (this.sickness > 0 ? 1.5 : 1) * pace * dt;
+    v.energy -= R.energyPerSec * (c.sprinting ? 1.6 : 1) * pace * dt;
 
     // Stamina
     if (c.sprinting) v.stamina -= R.sprintStamina * dt;

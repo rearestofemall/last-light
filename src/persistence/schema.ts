@@ -1,3 +1,4 @@
+import { type GameMode, sanitizeMode } from '../gameplay/GameMode';
 import type { SavedPiece } from '../building/BuildSystem';
 import type { SerializedInventory, ItemStack } from '../inventory/Inventory';
 import type { Vitals } from '../survival/Survival';
@@ -30,6 +31,8 @@ export interface SaveData {
   resources: Record<string, [number, number]>;
   lights: Record<string, { fuel: number; on: boolean }>;
   story: StorySave;
+  /** Story campaign or Free Play, with its rules (absent in older saves: story). */
+  mode: GameMode;
   /** Denormalised info for the Continue button. */
   meta: { location: string; region: string; day: number };
 }
@@ -164,6 +167,7 @@ export function validateSave(raw: unknown, clampX: (x: number) => number): SaveD
       flags,
       explored: Array.isArray(s.explored) ? s.explored.filter((x): x is number => typeof x === 'number') : [],
     },
+    mode: sanitizeMode(d.mode),
     meta: {
       location: typeof m.location === 'string' ? m.location : '',
       region: typeof m.region === 'string' ? m.region : '',

@@ -38,6 +38,11 @@ export class Crafting {
   }
 
   /** Learn recipes for an unlock key without announcing them (loading older saves). */
+  /** Free Play option: every recipe known. */
+  learnAll(): void {
+    for (const r of RECIPES) this.known.add(r.id);
+  }
+
   learnSilently(key: string): void {
     for (const r of RECIPES) if (r.unlock === key) this.known.add(r.id);
   }

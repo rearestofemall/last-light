@@ -921,3 +921,109 @@
   box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.35);
   pointer-events: none;
 }
+
+/* ---- Free Play options (main menu) ---- */
+.menu-opt__title {
+  margin: 0 0 6px 12px;
+  font: 500 26px/1.1 var(--serif);
+  color: var(--ink);
+  letter-spacing: 0.02em;
+}
+.menu-opt {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 2px 14px;
+  width: 100%;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-dim);
+  font: 500 14px/1.3 var(--sans);
+  text-align: left;
+}
+.menu-opt__label {
+  color: var(--ink);
+}
+.menu-opt__choices {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.menu-opt__choice {
+  padding: 6px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-dim);
+  font: 500 13px/1 var(--sans);
+  cursor: pointer;
+  transition: background 0.2s var(--ease), color 0.2s var(--ease), border-color 0.2s var(--ease);
+}
+.menu-opt__choice:hover,
+.menu-opt__choice:focus-visible {
+  outline: none;
+  border-color: var(--ember);
+  color: var(--ink);
+}
+.menu-opt__choice.is-on {
+  background: var(--ember-soft);
+  border-color: var(--ember);
+  color: var(--ink);
+}
+.menu-opt--toggle {
+  cursor: pointer;
+}
+.menu-opt--toggle:hover,
+.menu-opt--toggle:focus-visible {
+  outline: none;
+  background: linear-gradient(90deg, var(--ember-soft), transparent 85%);
+}
+.menu-opt__hint {
+  grid-column: 1;
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+.menu-opt__switch {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  position: relative;
+  width: 34px;
+  height: 20px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  transition: background 0.2s var(--ease), border-color 0.2s var(--ease);
+}
+.menu-opt__switch::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--ink-dim);
+  transition: transform 0.2s var(--ease), background 0.2s var(--ease);
+}
+.menu-opt--toggle.is-on .menu-opt__switch {
+  background: var(--ember-soft);
+  border-color: var(--ember);
+}
+.menu-opt--toggle.is-on .menu-opt__switch::after {
+  transform: translateX(14px);
+  background: var(--ember);
+}
+.menu.is-options .menu__tagline,
+.menu.is-options .menu__footer {
+  display: none;
+}
+.menu.is-options .menu__title h1 {
+  font-size: clamp(28px, 4vw, 40px);
+}
+.menu.is-options .menu__column {
+  max-height: 100vh;
+  overflow-y: auto;
+}

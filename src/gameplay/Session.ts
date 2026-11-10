@@ -18,6 +18,7 @@ import type { SaveData } from '../persistence/schema';
 import { SAVE_VERSION } from '../persistence/schema';
 import { PlayerController } from '../player/PlayerController';
 import { PlayerModel } from '../player/PlayerModel';
+import { FREE_SPAWNS, type GameMode, PACE, STORY_MODE, starterKit } from './GameMode';
 import type { CameraRig } from '../render/CameraRig';
 import type { EnvironmentInput } from '../render/Environment';
 import { NOTES } from '../story/notes';
@@ -373,7 +374,10 @@ export class Session implements BackpackHost {
   }
 
   // ------------------------------------------------------------ lifecycle
-  newGame(): void {
+  /** Story or Free Play, with its rules. */
+  mode: GameMode = { ...STORY_MODE };
+
+  newGame(mode: GameMode = STORY_MODE): void {
     this.story.reset();
     this.quests.reset();
     this.crafting.reset();
@@ -397,7 +401,33 @@ export class Session implements BackpackHost {
     this.respawn.y = this.player.body.y;
     this.locationId = null;
     this.regionId = null;
+    this.applyMode(mode, true);
     this.quests.update(false);
+  }
+
+  /**
+   * Apply a game mode's rules. On a fresh Free Play start this also opens every story gate,
+   * places the player in the chosen region and hands out the starter kit.
+   */
+  private applyMode(mode: GameMode, fresh: boolean): void {
+    this.mode = { ...mode };
+    const free = mode.kind === 'free';
+    const pace = PACE[mode.pace];
+    this.survival.drainMul = pace.drain;
+    this.survival.damageMul = pace.damage;
+    this.quests.enabled = !free;
+    this.tutorial.enabled = !free;
+    this.wildlife.peaceful = mode.peaceful;
+    if (mode.allRecipes) this.crafting.learnAll();
+    if (!free || !fresh) return;
+    // The whole world is open: the gorge has a rope across, the rockslide is cleared.
+    this.story.flags['gorge-crossed'] = true;
+    this.story.flags['pass-cleared'] = true;
+    this.world.applyGates();
+    const sp = FREE_SPAWNS[mode.region];
+    this.player.placeAt(sp.x, undefined, sp.z);
+    this.respawn = { x: sp.x, y: this.player.body.y, z: sp.z };
+    if (mode.starterKit) for (const [id, q] of starterKit(mode.region)) this.inventory.add(id, q);
   }
 
   /** Site crates keep their initial loot definition; rebuild them from scratch on new game. */
@@ -451,6 +481,7 @@ export class Session implements BackpackHost {
       resources: this.world.resources.serialize(),
       lights: this.serializeLights(),
       story: this.story.serialize(),
+      mode: { ...this.mode },
       meta: { location: locationAt(b.x)?.name ?? '', region: regionAt(b.x).name, day: this.clock.day },
     };
   }
@@ -477,6 +508,7 @@ export class Session implements BackpackHost {
     this.player.heading = d.player.heading;
     this.rig.yaw = d.player.heading + Math.PI;
     this.rig.pitch = 0.34;
+    this.applyMode(d.mode, false);
     this.world.applyGates();
     this.quests.update(false);
     this.hotbarDirty = true;

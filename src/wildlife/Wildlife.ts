@@ -114,6 +114,8 @@ export class Wildlife {
   private spawnTimer = 1;
   private howlTimer = 30;
   enabled = true;
+  /** Free Play option: no wolves spawn (and any present leave). */
+  peaceful = false;
 
   constructor(
     private world: CollisionWorld,
@@ -239,6 +241,7 @@ export class Wildlife {
     const counts: Partial<Record<Species, number>> = {};
     for (const a of this.animals) if (a.state !== 'dead') counts[a.species] = (counts[a.species] ?? 0) + 1;
     const options = (Object.keys(pop) as Species[]).filter((s) => {
+      if (this.peaceful && s === 'wolf') return false;
       const def = SPECIES[s];
       const active = night ? def.nocturnal || (s === 'wolf' && region === 'frost') : def.diurnal || (s === 'wolf' && region === 'frost' && Math.random() < 0.3);
       const max = (pop[s] ?? 0) * (s === 'wolf' && night ? 1.5 : 1) * 1.5;
@@ -300,7 +303,7 @@ export class Wildlife {
       const far = dist > 110;
       const gone = a.state === 'dead' ? (a.deadTime += dt) > 240 : false;
       const outOfTime = a.state !== 'dead' && a.state !== 'attack' && a.state !== 'stalk' && dist > 45 && ((night && SPECIES[a.species].diurnal && a.species !== 'deer') || (!night && a.species === 'wolf' && region !== 'frost'));
-      if (far || gone || (a.state === 'fly' && a.timer <= 0) || outOfTime || a.deadTime >= 999) {
+      if (far || gone || (a.state === 'fly' && a.timer <= 0) || outOfTime || a.deadTime >= 999 || (this.peaceful && a.species === 'wolf' && a.state !== 'dead')) {
         this.despawn(a);
         this.animals.splice(i, 1);
         continue;

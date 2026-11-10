@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GameAudio } from '../audio/GameAudio';
+import type { GameMode } from '../gameplay/GameMode';
 import { Session } from '../gameplay/Session';
 import { SaveManager } from '../persistence/SaveManager';
 import { CameraRig } from '../render/CameraRig';
@@ -130,8 +131,8 @@ export class Game implements GameApi {
     return this.saves.summary();
   }
 
-  async newGame(): Promise<void> {
-    this.session.newGame();
+  async newGame(mode?: GameMode): Promise<void> {
+    this.session.newGame(mode);
     this.startPlaying();
     await this.saveGame(true);
   }

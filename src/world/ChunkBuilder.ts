@@ -30,9 +30,12 @@ export function createChunkMaterials(standard: boolean): ChunkMaterials {
   const terrain = standard
     ? new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0 })
     : new THREE.MeshLambertMaterial({ vertexColors: true });
-  groundDetail(terrain);
   const solid = vertexColorMaterial(standard);
-  stoneDetail(solid);
+  // Per-pixel detail noise is the costliest fragment work: only on Medium and High.
+  if (standard) {
+    groundDetail(terrain);
+    stoneDetail(solid);
+  }
   return {
     terrain,
     skirt: new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }),
