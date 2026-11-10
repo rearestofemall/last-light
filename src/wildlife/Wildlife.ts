@@ -1,13 +1,16 @@
 import * as THREE from 'three';
-import { clamp, damp } from '../core/math';
+import { angleDelta, damp } from '../core/math';
 import type { GameEventBus } from '../core/events';
 import type { Interactable, InteractionSystem } from '../interaction/InteractionSystem';
 import type { CollisionWorld } from '../physics/CollisionWorld';
 import { type Body, createBody, DEFAULT_MOVE, moveBody } from '../physics/KinematicBody';
 import { regionAt, type RegionId } from '../world/WorldDef';
+import { Bird } from './Bird';
+import type { Quadruped } from './Quadruped';
+import { makeDeer, makeRabbit, makeWolf } from './species';
 
 export type Species = 'deer' | 'rabbit' | 'wolf' | 'bird';
-type State = 'idle' | 'graze' | 'wander' | 'flee' | 'sleep' | 'stalk' | 'circle' | 'attack' | 'fly' | 'dead';
+type State = 'idle' | 'graze' | 'wander' | 'flee' | 'sleep' | 'stalk' | 'circle' | 'attack' | 'fly' | 'dead' | 'howl';
 
 interface SpeciesDef {
   hp: number;
@@ -36,139 +39,6 @@ const POPULATION: Record<RegionId, Partial<Record<Species, number>>> = {
   coast: { deer: 1, rabbit: 2, wolf: 1, bird: 6 },
 };
 
-const mat = (c: number) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.9, flatShading: true });
-const MATS = {
-  deer: mat(0x8a6040),
-  deerLight: mat(0xd9c4a0),
-  antler: mat(0xcdbb98),
-  rabbit: mat(0x8b7d6b),
-  rabbitW: mat(0xe8e2d6),
-  wolf: mat(0x5d5a57),
-  wolfDark: mat(0x3a3836),
-  eye: new THREE.MeshBasicMaterial({ color: 0xffd36a }),
-  bird: mat(0x4b3d33),
-  birdB: mat(0xb2543a),
-  black: mat(0x1a1a1a),
-};
-
-interface Rig {
-  root: THREE.Group;
-  body: THREE.Group;
-  head: THREE.Group;
-  legs: THREE.Group[];
-  wings?: THREE.Group[];
-  eyes?: THREE.Mesh[];
-}
-
-function box(w: number, h: number, d: number, m: THREE.Material, x = 0, y = 0, z = 0): THREE.Mesh {
-  const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
-  mesh.position.set(x, y, z);
-  mesh.castShadow = true;
-  return mesh;
-}
-
-/** Procedural quadruped: body, neck/head, four jointed legs. Faces +x. */
-function quadruped(sp: 'deer' | 'wolf' | 'rabbit'): Rig {
-  const root = new THREE.Group();
-  const body = new THREE.Group();
-  root.add(body);
-  const head = new THREE.Group();
-  const legs: THREE.Group[] = [];
-  let eyes: THREE.Mesh[] | undefined;
-  if (sp === 'deer') {
-    body.position.y = 1.0;
-    body.add(box(1.2, 0.5, 0.42, MATS.deer));
-    body.add(box(0.5, 0.2, 0.36, MATS.deerLight, -0.1, -0.2, 0));
-    body.add(box(0.12, 0.18, 0.12, MATS.deerLight, -0.65, 0.12, 0));
-    head.position.set(0.55, 0.25, 0);
-    body.add(head);
-    const neck = box(0.18, 0.55, 0.2, MATS.deer, 0.08, 0.22, 0);
-    neck.rotation.z = -0.4;
-    head.add(neck);
-    head.add(box(0.36, 0.2, 0.2, MATS.deer, 0.28, 0.5, 0));
-    head.add(box(0.1, 0.08, 0.14, MATS.black, 0.47, 0.47, 0));
-    for (const s of [-1, 1]) {
-      const ear = box(0.06, 0.16, 0.08, MATS.deer, 0.15, 0.66, s * 0.12);
-      ear.rotation.x = s * 0.6;
-      head.add(ear);
-      const a1 = box(0.04, 0.4, 0.04, MATS.antler, 0.18, 0.82, s * 0.09);
-      a1.rotation.x = s * 0.25;
-      head.add(a1);
-      const a2 = box(0.03, 0.22, 0.03, MATS.antler, 0.28, 0.9, s * 0.13);
-      a2.rotation.z = -0.7;
-      head.add(a2);
-    }
-  } else if (sp === 'wolf') {
-    body.position.y = 0.72;
-    body.add(box(0.95, 0.38, 0.32, MATS.wolf));
-    body.add(box(0.4, 0.42, 0.36, MATS.wolfDark, 0.25, 0.04, 0));
-    const tail = box(0.5, 0.1, 0.1, MATS.wolfDark, -0.65, 0.02, 0);
-    tail.rotation.z = 0.4;
-    body.add(tail);
-    head.position.set(0.5, 0.12, 0);
-    body.add(head);
-    head.add(box(0.3, 0.26, 0.26, MATS.wolf, 0.12, 0.05, 0));
-    head.add(box(0.24, 0.12, 0.14, MATS.wolfDark, 0.34, -0.02, 0));
-    eyes = [];
-    for (const s of [-1, 1]) {
-      head.add(box(0.06, 0.12, 0.06, MATS.wolfDark, 0.05, 0.24, s * 0.08));
-      const eye = box(0.03, 0.03, 0.03, MATS.eye, 0.27, 0.11, s * 0.08);
-      eye.castShadow = false;
-      head.add(eye);
-      eyes.push(eye);
-    }
-  } else {
-    body.position.y = 0.2;
-    body.add(box(0.32, 0.2, 0.2, MATS.rabbit));
-    body.add(box(0.08, 0.08, 0.08, MATS.rabbitW, -0.18, 0.04, 0));
-    head.position.set(0.17, 0.1, 0);
-    body.add(head);
-    head.add(box(0.14, 0.13, 0.13, MATS.rabbit, 0.03, 0.02, 0));
-    for (const s of [-1, 1]) head.add(box(0.04, 0.18, 0.05, MATS.rabbit, -0.02, 0.15, s * 0.04));
-  }
-  const legLen = sp === 'deer' ? 0.95 : sp === 'wolf' ? 0.62 : 0.14;
-  const legW = sp === 'deer' ? 0.08 : sp === 'wolf' ? 0.09 : 0.06;
-  const legX = sp === 'deer' ? 0.48 : sp === 'wolf' ? 0.36 : 0.11;
-  const legZ = sp === 'deer' ? 0.13 : sp === 'wolf' ? 0.1 : 0.07;
-  const lm = sp === 'deer' ? MATS.deer : sp === 'wolf' ? MATS.wolf : MATS.rabbit;
-  for (const lx of [legX, -legX]) {
-    for (const lz of [legZ, -legZ]) {
-      const leg = new THREE.Group();
-      leg.position.set(lx, body.position.y - (sp === 'rabbit' ? 0.05 : 0.15), lz);
-      leg.add(box(legW, legLen, legW, lm, 0, -legLen / 2 + (sp === 'rabbit' ? 0 : 0.1), 0));
-      root.add(leg);
-      legs.push(leg);
-    }
-  }
-  return { root, body, head, legs, eyes };
-}
-
-function birdRig(): Rig {
-  const root = new THREE.Group();
-  const body = new THREE.Group();
-  body.position.y = 0.12;
-  root.add(body);
-  body.add(box(0.18, 0.1, 0.1, MATS.bird));
-  body.add(box(0.06, 0.06, 0.08, MATS.birdB, 0.06, -0.02, 0));
-  body.add(box(0.12, 0.03, 0.06, MATS.bird, -0.13, 0.02, 0));
-  const head = new THREE.Group();
-  head.position.set(0.1, 0.06, 0);
-  head.add(box(0.07, 0.07, 0.07, MATS.bird));
-  head.add(box(0.04, 0.015, 0.015, MATS.black, 0.05, -0.01, 0));
-  body.add(head);
-  const wings: THREE.Group[] = [];
-  for (const s of [-1, 1]) {
-    const w = new THREE.Group();
-    w.position.set(0, 0.03, s * 0.05);
-    const blade = box(0.14, 0.015, 0.2, MATS.bird, 0, 0, s * 0.1);
-    w.add(blade);
-    body.add(w);
-    wings.push(w);
-  }
-  const legs: THREE.Group[] = [];
-  return { root, body, head, legs, wings };
-}
-
 export interface WildlifeHost {
   events: GameEventBus;
   interactions: InteractionSystem;
@@ -195,14 +65,16 @@ class Animal {
   /** Travel direction (radians, 0 = +z). */
   heading = Math.random() * Math.PI * 2;
   hp: number;
-  rig: Rig;
+  /** Skinned model; birds and quadrupeds animate differently. */
+  model: Quadruped | Bird;
   phase = Math.random() * 10;
+  lastYaw = 0;
+  turn = 0;
   attackCd = 0;
   hurtFlash = 0;
   growlCd = 0;
   carcass: Interactable | null = null;
   deadTime = 0;
-  yaw = 0;
   circleDir = Math.random() < 0.5 ? 1 : -1;
 
   constructor(
@@ -210,12 +82,18 @@ class Animal {
     x: number,
     y: number,
     z: number,
+    region: RegionId,
   ) {
     const def = SPECIES[species];
     this.hp = def.hp;
     this.body = createBody(x, y, z, species === 'deer' ? 0.45 : species === 'wolf' ? 0.38 : 0.15, def.size);
-    this.rig = species === 'bird' ? birdRig() : quadruped(species);
-    this.rig.root.traverse((o) => (o.castShadow = true));
+    this.model = species === 'bird' ? new Bird(region) : species === 'wolf' ? makeWolf(region) : species === 'deer' ? makeDeer(region) : makeRabbit(region);
+    this.model.yaw = this.heading;
+    this.lastYaw = this.heading;
+  }
+
+  get quad(): Quadruped | null {
+    return this.model instanceof Bird ? null : this.model;
   }
 }
 
@@ -261,7 +139,8 @@ export class Wildlife {
   }
 
   private despawn(a: Animal): void {
-    this.group.remove(a.rig.root);
+    this.group.remove(a.model.root);
+    a.model.dispose();
     if (a.carcass) this.host.interactions.remove(a.carcass);
   }
 
@@ -292,6 +171,7 @@ export class Wildlife {
       if (d > 0.4 && (dx * fx + dz * fz) / d < 0.25) continue;
       a.hp -= damage;
       a.hurtFlash = 0.25;
+      a.quad?.hurt();
       hit = true;
       if (a.hp <= 0) this.kill(a);
       else if (a.species === 'wolf') {
@@ -307,6 +187,7 @@ export class Wildlife {
 
   private kill(a: Animal): void {
     a.state = 'dead';
+    a.model.die();
     a.deadTime = 0;
     a.body.vx = a.body.vz = 0;
     const def = SPECIES[a.species];
@@ -343,10 +224,10 @@ export class Wildlife {
   /** Spawn an animal at a point (debug and scripted encounters). */
   spawnAt(sp: Species, x: number, z = this.host.playerZ()): void {
     const y = this.world.resolveSpawnY(x, z, this.world.groundAt(x, z, 0.5), 0.5, 1);
-    const a = new Animal(sp, x, y, z);
+    const a = new Animal(sp, x, y, z, regionAt(x).id);
     a.state = 'wander';
     this.animals.push(a);
-    this.group.add(a.rig.root);
+    this.group.add(a.model.root);
   }
 
   private spawn(region: RegionId, night: boolean, px: number, pz: number): void {
@@ -371,11 +252,11 @@ export class Wildlife {
     if (this.world.terrain.gradientAt(x, z) > 0.9) return;
     const y = this.world.resolveSpawnY(x, z, this.world.groundAt(x, z, 0.5), 0.5, 1);
     if (this.host.isUnderground(x, z, y)) return;
-    const a = new Animal(sp, x, y, z);
+    const a = new Animal(sp, x, y, z, region);
     a.state = sp === 'wolf' ? 'wander' : sp === 'bird' ? 'idle' : 'graze';
     a.timer = 2 + Math.random() * 4;
     this.animals.push(a);
-    this.group.add(a.rig.root);
+    this.group.add(a.model.root);
   }
 
   update(dt: number): void {
@@ -396,7 +277,15 @@ export class Wildlife {
         this.howlTimer -= dt;
         if (this.howlTimer <= 0) {
           this.howlTimer = 40 + Math.random() * 70;
-          if (this.animals.some((a) => a.species === 'wolf' && a.state !== 'dead')) this.host.events.emit('sfx', { name: 'howl' });
+          const wolves = this.animals.filter((a) => a.species === 'wolf' && (a.state === 'wander' || a.state === 'idle'));
+          if (wolves.length) {
+            this.host.events.emit('sfx', { name: 'howl' });
+            // One of them sits back and howls.
+            const w = wolves[Math.floor(Math.random() * wolves.length)];
+            w.state = 'howl';
+            w.timer = 3.3;
+            w.quad?.howl();
+          }
         }
       }
     }
@@ -414,7 +303,7 @@ export class Wildlife {
       }
       this.think(a, dt, px, py, pz, night);
       this.move(a, dt, px, pz);
-      this.animate(a, dt);
+      this.animate(a, dt, px, pz);
     }
   }
 
@@ -465,6 +354,7 @@ export class Wildlife {
         a.heading = toward;
         if (a.state === 'attack' && a.attackCd <= 0 && Math.abs(py - b.y) < 1.4) {
           a.attackCd = 1.5;
+          a.quad?.bite();
           this.host.damagePlayer(9 + Math.random() * 6, 'wolves');
           this.host.events.emit('sfx', { name: 'growl', x: b.x });
         }
@@ -570,40 +460,29 @@ export class Wildlife {
     if (b.y < -400) a.deadTime = 999;
   }
 
-  private animate(a: Animal, dt: number): void {
-    const r = a.rig;
+  private animate(a: Animal, dt: number, px: number, pz: number): void {
     const b = a.body;
-    r.root.position.set(b.x, b.y, b.z);
+    const m = a.model;
+    m.root.position.set(b.x, b.y, b.z);
     const sp = Math.hypot(b.vx, b.vz);
     const face = sp > 0.3 ? Math.atan2(b.vx, b.vz) : a.heading;
-    let dy = face - Math.PI / 2 - a.yaw;
-    dy = Math.atan2(Math.sin(dy), Math.cos(dy));
-    a.yaw += dy * clamp(dt * 8, 0, 1);
-    r.root.rotation.y = a.yaw;
-    a.phase += dt * (2 + sp * 2.2);
-    if (a.species === 'bird') {
-      const flap = a.state === 'fly' ? Math.sin(a.phase * 5) * 0.9 : 0;
-      r.wings![0].rotation.x = flap;
-      r.wings![1].rotation.x = -flap;
-      r.head.rotation.z = a.state === 'idle' ? Math.sin(a.phase * 3) * 0.3 - 0.2 : 0;
-      r.body.position.y = 0.12 + (a.state === 'idle' ? Math.abs(Math.sin(a.phase * 2)) * 0.02 : 0);
+    if (a.state !== 'dead') m.turnToward(face, dt, a.species === 'bird' ? 12 : 6);
+    a.turn = damp(a.turn, angleDelta(a.lastYaw, m.yaw) / Math.max(dt, 1e-3), 8, dt);
+    a.lastYaw = m.yaw;
+    if (m instanceof Bird) {
+      m.update(dt, a.state === 'fly', a.state === 'fly' && a.timer > 2.5);
       return;
     }
-    if (a.state === 'dead') {
-      r.root.rotation.x = damp(r.root.rotation.x, Math.PI / 2, 6, dt);
-      r.root.position.y = b.y + 0.15;
-      return;
-    }
-    const swing = Math.min(1, sp / 3) * 0.6;
-    r.legs.forEach((leg, i) => {
-      const off = i === 0 || i === 3 ? 0 : Math.PI;
-      leg.rotation.z = Math.sin(a.phase + off) * swing;
+    const dist = Math.hypot(px - b.x, pz - b.z);
+    const watching = dist < 16 && a.state !== 'flee' && a.state !== 'dead' && a.state !== 'sleep';
+    m.update({
+      dt,
+      speed: sp,
+      state: a.state,
+      turn: a.turn,
+      ground: (x, z) => this.world.groundAt(x, z, 0.05),
+      look: watching ? angleDelta(m.yaw, Math.atan2(px - b.x, pz - b.z)) : null,
+      dark: this.host.darkness() > 0.4,
     });
-    const sleeping = a.state === 'sleep';
-    r.body.rotation.z = damp(r.body.rotation.z, a.state === 'graze' ? -0.08 : a.state === 'flee' ? 0.05 : 0, 6, dt);
-    r.head.rotation.z = damp(r.head.rotation.z, a.state === 'graze' ? -1.1 : a.state === 'stalk' || a.state === 'circle' ? -0.35 : 0, 5, dt);
-    const lower = sleeping ? (a.species === 'deer' ? 0.55 : 0.35) : a.state === 'stalk' ? 0.12 : 0;
-    r.root.position.y = b.y - lower + (a.species === 'rabbit' && sp > 0.5 ? Math.abs(Math.sin(a.phase)) * 0.15 : 0);
-    if (r.eyes) for (const e of r.eyes) e.visible = this.host.darkness() > 0.4;
   }
 }

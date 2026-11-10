@@ -16,7 +16,13 @@ async function boot(): Promise<void> {
     ui.innerHTML = '<div class="screen loading is-visible is-error"><div class="loading__title">THE LAST LIGHT</div><div class="loading__status">This game needs WebGL. Please enable hardware acceleration or try a different browser.</div></div>';
     return;
   }
-  if (new URLSearchParams(location.search).has('viewer')) {
+  const params = new URLSearchParams(location.search);
+  if (params.get('viewer') === 'animals') {
+    const { startAnimalViewer } = await import('./dev/AnimalViewer');
+    startAnimalViewer(canvas, ui);
+    return;
+  }
+  if (params.has('viewer')) {
     const { startCharacterViewer } = await import('./dev/CharacterViewer');
     startCharacterViewer(canvas, ui);
     return;

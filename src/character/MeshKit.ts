@@ -99,6 +99,29 @@ export function loft(rings: Ring[], seg = 8, caps = true): THREE.BufferGeometry 
   return g;
 }
 
+/** A lofted tube from `a` to `b`; profile entries are [t (0–1 along), rx, rz?]. */
+export function tube(a: THREE.Vector3, b: THREE.Vector3, profile: [number, number, number?][], seg = 7): THREE.BufferGeometry {
+  const d = b.clone().sub(a);
+  const L = d.length();
+  const g = loft(
+    profile.map(([t, rx, rz]) => ({ y: t * L, rx, rz: rz ?? rx })),
+    seg,
+  );
+  g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.normalize()));
+  g.translate(a.x, a.y, a.z);
+  return g;
+}
+
+/** Low-poly ellipsoid centred at (x, y, z). */
+export function ellipsoid(x: number, y: number, z: number, rx: number, ry: number, rz: number, w = 8, h = 6): THREE.BufferGeometry {
+  return new THREE.SphereGeometry(1, w, h).scale(rx, ry, rz).translate(x, y, z);
+}
+
+/** Cone pointing along +y from its base centre (x, y, z). */
+export function cone(x: number, y: number, z: number, r: number, h: number, seg = 5): THREE.BufferGeometry {
+  return new THREE.ConeGeometry(r, h, seg).translate(x, y + h / 2, z);
+}
+
 /** Box centred at (x, y, z) with optional subdivisions (for deforming). */
 export function box(w: number, h: number, d: number, x: number, y: number, z: number, segs: [number, number, number] = [1, 1, 1]): THREE.BufferGeometry {
   return new THREE.BoxGeometry(w, h, d, ...segs).translate(x, y, z);
@@ -143,6 +166,34 @@ export class MeshKit {
     for (let t = 0; t + 2 < p.count; t += 3) {
       this.v.fromBufferAttribute(p, t);
       const k = 1 + (hash(this.v.x, this.v.y, this.v.z) - 0.5) * shade;
+      for (let i = t; i < t + 3; i++) {
+        this.v.fromBufferAttribute(p, i);
+        this.pos.push(this.v.x, this.v.y, this.v.z);
+        this.col.push(base.r * k, base.g * k, base.b * k);
+        const [a, wa, b, wb] = skin(this.v);
+        this.si.push(a, b, 0, 0);
+        const sum = wa + wb || 1;
+        this.sw.push(wa / sum, wb / sum, 0, 0);
+      }
+    }
+    if (g !== geo) g.dispose();
+    geo.dispose();
+  }
+
+  /**
+   * Like add(), but each triangle's colour comes from `paint(centroid)` — for coat
+   * markings (darker saddles, pale bellies, spots) baked into one material.
+   */
+  addPainted(geo: THREE.BufferGeometry, paint: (c: THREE.Vector3) => number, skin: SkinFn, shade = 0.07): void {
+    const g = geo.index ? geo.toNonIndexed() : geo;
+    const p = g.attributes.position as THREE.BufferAttribute;
+    const cen = new THREE.Vector3();
+    for (let t = 0; t + 2 < p.count; t += 3) {
+      cen.set(0, 0, 0);
+      for (let i = t; i < t + 3; i++) cen.add(this.v.fromBufferAttribute(p, i));
+      cen.multiplyScalar(1 / 3);
+      const base = this.c.setHex(paint(cen));
+      const k = 1 + (hash(cen.x, cen.y, cen.z) - 0.5) * shade;
       for (let i = t; i < t + 3; i++) {
         this.v.fromBufferAttribute(p, i);
         this.pos.push(this.v.x, this.v.y, this.v.z);
