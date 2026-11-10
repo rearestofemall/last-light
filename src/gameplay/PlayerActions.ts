@@ -5,7 +5,7 @@ import type { Inventory, ItemStack } from '../inventory/Inventory';
 import { isConsumable, ITEMS, type ToolKind } from '../inventory/items';
 import { FireVisual, type LightSource, type LightSystem, makeLight } from '../lighting/LightSystem';
 import type { PlayerController } from '../player/PlayerController';
-import type { PlayerModel } from '../player/PlayerModel';
+import type { PlayerModel, WorkKind } from '../player/PlayerModel';
 import type { Survival } from '../survival/Survival';
 import type { Wildlife } from '../wildlife/Wildlife';
 
@@ -70,10 +70,10 @@ export class PlayerActions {
   }
 
   /** Starts a short harvesting action. Returns false while the previous one is still playing. */
-  beginWork(): boolean {
+  beginWork(kind: WorkKind = 'gather'): boolean {
     if (this.workTimer > 0) return false;
-    this.workTimer = 0.42;
-    this.model.work();
+    this.workTimer = kind === 'gather' ? 0.6 : 0.48;
+    this.model.work(kind);
     return true;
   }
 
@@ -119,7 +119,7 @@ export class PlayerActions {
     }
     this.swingTimer = 0.5;
     this.survival.vitals.stamina -= 6;
-    this.model.swing();
+    this.model.swing(tool ? (ITEMS[tool.id].tool?.kind ?? 'fist') : 'fist');
     this.events.emit('sfx', { name: 'swing' });
     const b = this.player.body;
     // Aim assist: turn to the closest animal in reach, else swing where the camera looks.
@@ -143,7 +143,8 @@ export class PlayerActions {
     if (d.id === 'remedy') this.survival.sickness = 0;
     if (d.returns) this.inv.add(d.returns, 1);
     this.events.emit('sfx', { name: d.category === 'drink' ? 'drink' : 'eat' });
-    this.model.eat();
+    if (d.category === 'drink') this.model.drink();
+    else this.model.eat();
     if (d.sickness && Math.random() < d.sickness) {
       this.survival.sickness = 90;
       this.survival.damage(6, 'food poisoning');

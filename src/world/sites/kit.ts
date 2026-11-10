@@ -104,7 +104,7 @@ export interface SiteHost {
   travel(x: number, y: number, label?: string): void;
   hasTool(kind: ToolKind): boolean;
   wearTool(kind: ToolKind): void;
-  beginWork(): boolean;
+  beginWork(kind?: 'chop' | 'mine' | 'gather'): boolean;
   startEnding(): void;
   openCrafting(): void;
 }

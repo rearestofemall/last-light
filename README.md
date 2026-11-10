@@ -16,6 +16,10 @@ npm run build      # type-check + production build into dist/
 npm test           # unit tests
 ```
 
+Add `?viewer` to the URL (e.g. http://localhost:5173/?viewer) to open the character viewer. It shows the
+survivor on a turntable, with buttons for every animation, held items, cold/tired/death states and a slope for
+foot IK.
+
 ## Controls
 
 Click the game to capture the mouse (Esc releases it). Without pointer lock, hold the right mouse button and drag
@@ -105,7 +109,8 @@ src/gameplay     Session (owns and orders all gameplay systems), player actions/
 src/render       renderer, third-person camera, sky, far mountains, atmosphere, lighting, weather FX, particles
 src/world        world layout, terrain, chunk streaming, vegetation, resources, water, sites/
 src/physics      3D kinematic bodies against terrain and box colliders (spatial hash)
-src/player       movement controller and procedural animated character
+src/player       movement controller and the character animator (layers, foot IK, look-at)
+src/character    skinned procedural human: mesh kit, skeleton, keyframe clips, pose blending, IK
 src/survival     vitals and their rules
 src/inventory    items, inventory, containers
 src/crafting     recipes and crafting

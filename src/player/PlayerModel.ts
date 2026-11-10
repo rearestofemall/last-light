@@ -1,274 +1,484 @@
 import * as THREE from 'three';
-import { angleDelta, clamp, damp, lerp } from '../core/math';
-import type { PlayerController } from './PlayerController';
+import { angleDelta, clamp, damp, lerp, smoothstep } from '../core/math';
+import { type Appearance, BONE_INDEX, type BoneName, BONES, HumanBody, SHIN_LEN, THIGH_LEN } from '../character/HumanBody';
+import { CLIPS, type ClipName } from '../character/humanClips';
+import { solveLeg } from '../character/ik';
+import { add, blend, type Clip, HIPS_OFFSET, newPose, sample } from '../character/Pose';
+import type { MoveState } from './PlayerController';
 
-interface Limb {
-  upper: THREE.Group;
-  lower: THREE.Group;
+/** What the model needs to know about the thing it animates (PlayerController fits). */
+export interface CharacterDriver {
+  body: { x: number; y: number; z: number; vx: number; vy: number; vz: number; grounded: boolean };
+  prevX: number;
+  prevY: number;
+  prevZ: number;
+  heading: number;
+  state: MoveState;
 }
 
-const mat = (color: number, roughness = 0.85) => new THREE.MeshStandardMaterial({ color, roughness, metalness: 0 });
+export type WorkKind = 'chop' | 'mine' | 'gather';
+export type SwingKind = 'fist' | 'knife' | 'axe' | 'pickaxe';
 
-function part(geo: THREE.BufferGeometry, m: THREE.Material, y = 0, x = 0, z = 0): THREE.Mesh {
-  const mesh = new THREE.Mesh(geo, m);
-  mesh.position.set(x, y, z);
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
-  return mesh;
+/** Critically damped spring for secondary motion. */
+class Spring {
+  v = 0;
+  vel = 0;
+  update(target: number, dt: number, stiffness = 90, damping = 9): number {
+    const a = (target - this.v) * stiffness - this.vel * damping;
+    this.vel += a * dt;
+    this.v += this.vel * dt;
+    return this.v;
+  }
 }
+
+const FIDGETS: ClipName[] = ['lookAround', 'adjustPack', 'stretch'];
+/** The fall pose without the right arm, so a held light stays up while airborne. */
+const FALL_KEEP_LIGHT = CLIPS.fall.mask.map((v, i) => (i === BONE_INDEX.upperArmR || i === BONE_INDEX.lowerArmR || i === BONE_INDEX.handR ? 0 : v));
+const R = (bone: BoneName, axis: number) => BONE_INDEX[bone] * 3 + axis;
+const tmpV = new THREE.Vector3();
+const tmpV2 = new THREE.Vector3();
 
 /**
- * Procedurally built, procedurally animated character.
- * The rig is a hierarchy of pivots; poses for ground, air and swimming are blended
- * and every joint is critically damped toward its target for smooth transitions.
+ * The survivor: a skinned procedural body driven by layered keyframe clips (locomotion,
+ * air, swimming, actions, fidgets) with procedural layers on top: lean into turns, head
+ * look-at, foot IK on uneven ground and steps, a swinging scarf and a bouncing pack.
  */
 export class PlayerModel {
-  readonly root = new THREE.Group();
-  /** Attach point for held items (torch, lantern) in later milestones. */
-  readonly handAnchor = new THREE.Group();
-  private hips = new THREE.Group();
-  private torso = new THREE.Group();
-  private head = new THREE.Group();
-  private armL: Limb;
-  private armR: Limb;
-  private legL: Limb;
-  private legR: Limb;
-  private yaw = Math.PI / 2;
-  private phase = 0;
-  private airW = 0;
-  private swimW = 0;
-  private time = 0;
-  private landSquash = 0;
-  private actionT = 0;
-  private actionDur = 0;
-  private actionKind: 'swing' | 'work' | 'eat' | null = null;
-  /** Raises the right arm when carrying a light. */
+  readonly body: HumanBody;
+  readonly root: THREE.Group;
+  /** Attach point for held items (torch, lantern, tools), inside the right fist. */
+  readonly handAnchor: THREE.Group;
+  /** Raises the right arm to hold a light up. */
   holdingLight = false;
+  /** Grips a tool or weapon in the right hand. */
+  holdingTool = false;
+  /** 0–1: how cold the character feels (hug and shiver). */
+  cold = 0;
+  /** 0–1: exhaustion (slump). */
+  tired = 0;
+  dead = false;
+  /** World point to glance at (an interactable), or null. */
+  lookTarget: THREE.Vector3 | null = null;
+  /** World heading the camera faces; idle characters glance that way. */
+  viewHeading: number | null = null;
+  /** Ground height under a foot: (x, z, feetY) → y. Enables foot IK. */
+  ground: ((x: number, z: number, nearY: number) => number) | null = null;
 
+  private pose = newPose();
+  private tmp = newPose();
+  private tmp2 = newPose();
+  private time = Math.random() * 10;
+  private phase = 0;
+  private yaw = Math.PI / 2;
+  private yawRate = 0;
+  private lastHeading = 0;
+  private speedPrev = 0;
+  private accel = 0;
+  // Layer weights.
+  private moveW = 0;
+  private runW = 0;
+  private airW = 0;
+  private riseW = 0;
+  private swimW = 0;
+  private swimMoveW = 0;
+  private wadeW = 0;
+  private lightW = 0;
+  private toolW = 0;
+  private coldW = 0;
+  private tiredW = 0;
+  private deadW = 0;
+  private deadT = 0;
+  // One-shots.
+  private action: Clip | null = null;
+  private actionT = 0;
+  private landT = 1;
+  private landK = 0;
+  private hurtT = 1;
+  private hurtK = 0;
+  private fidget: Clip | null = null;
+  private fidgetT = 0;
+  private stillTime = 0;
+  private nextFidget = 7 + Math.random() * 6;
+  // Procedural.
+  private lean = 0;
+  private lookYaw = 0;
+  private lookPitch = 0;
+  private scarfX = new Spring();
+  private scarfZ = new Spring();
+  private packX = new Spring();
+  private hipsVyPrev = 0;
+  private pelvisDrop = 0;
+  private ikW = 0;
+  private blinkT = 2;
   private sitting = false;
+  private unfrozen = false;
 
-  constructor(opts: { jacket?: number; scarf?: number; hair?: number } = {}) {
-    const jacket = mat(opts.jacket ?? 0x4b5434);
-    const jacketDark = mat(new THREE.Color(opts.jacket ?? 0x4b5434).multiplyScalar(0.78).getHex());
-    const pants = mat(0x353a44);
-    const skin = mat(0xc99f7e, 0.7);
-    const boots = mat(0x2b231d, 0.95);
-    const pack = mat(0x6e4b2c);
-    const scarf = mat(opts.scarf ?? 0x9a3d2a);
-    const hair = mat(opts.hair ?? 0x2a2019);
-
-    this.root.add(this.hips);
-    this.hips.position.y = 0.94;
-
-    // Torso
-    this.hips.add(this.torso);
-    const chest = part(new THREE.CapsuleGeometry(0.2, 0.34, 4, 10), jacket, 0.33);
-    chest.scale.set(1.08, 1, 0.78);
-    this.torso.add(chest);
-    const belt = part(new THREE.CylinderGeometry(0.2, 0.21, 0.08, 10), mat(0x2a2420), 0.06);
-    belt.scale.z = 0.8;
-    this.torso.add(belt);
-    const scarfMesh = part(new THREE.TorusGeometry(0.13, 0.055, 6, 12), scarf, 0.63);
-    scarfMesh.rotation.x = Math.PI / 2;
-    this.torso.add(scarfMesh);
-    const backpack = part(new THREE.BoxGeometry(0.32, 0.42, 0.2), pack, 0.38, 0, -0.22);
-    this.torso.add(backpack);
-    const roll = part(new THREE.CylinderGeometry(0.08, 0.08, 0.38, 8), mat(0x56603f), 0.64, 0, -0.22);
-    roll.rotation.z = Math.PI / 2;
-    this.torso.add(roll);
-
-    // Head
-    this.torso.add(this.head);
-    this.head.position.y = 0.7;
-    const skull = part(new THREE.SphereGeometry(0.135, 14, 10), skin, 0.1);
-    skull.scale.set(0.95, 1.08, 1);
-    this.head.add(skull);
-    const hairCap = part(new THREE.SphereGeometry(0.142, 14, 8, 0, Math.PI * 2, 0, Math.PI * 0.55), hair, 0.12, 0, -0.01);
-    this.head.add(hairCap);
-    const hood = part(new THREE.TorusGeometry(0.12, 0.05, 6, 12, Math.PI * 1.3), jacketDark, 0.07, 0, -0.05);
-    hood.rotation.set(Math.PI / 2 + 0.3, 0, Math.PI * 0.85);
-    this.head.add(hood);
-    const nose = part(new THREE.ConeGeometry(0.025, 0.06, 5), skin, 0.08, 0, 0.13);
-    nose.rotation.x = Math.PI / 2;
-    this.head.add(nose);
-
-    // Limbs
-    const limb = (x: number, y: number, parent: THREE.Object3D, upperLen: number, lowerLen: number, r: number, mUp: THREE.Material, mLow: THREE.Material, end?: THREE.Mesh): Limb => {
-      const upper = new THREE.Group();
-      upper.position.set(x, y, 0);
-      parent.add(upper);
-      upper.add(part(new THREE.CapsuleGeometry(r, upperLen - r * 2, 3, 8), mUp, -upperLen / 2));
-      const lower = new THREE.Group();
-      lower.position.y = -upperLen;
-      upper.add(lower);
-      lower.add(part(new THREE.CapsuleGeometry(r * 0.88, lowerLen - r * 2, 3, 8), mLow, -lowerLen / 2));
-      if (end) lower.add(end);
-      return { upper, lower };
-    };
-    const boot = () => part(new THREE.BoxGeometry(0.13, 0.11, 0.26), boots, -0.45, 0, 0.05);
-    this.legL = limb(0.105, 0, this.hips, 0.46, 0.46, 0.085, pants, pants, boot());
-    this.legR = limb(-0.105, 0, this.hips, 0.46, 0.46, 0.085, pants, pants, boot());
-    const hand = () => part(new THREE.SphereGeometry(0.05, 8, 6), skin, -0.36);
-    this.armL = limb(0.26, 0.56, this.torso, 0.32, 0.32, 0.062, jacket, jacket, hand());
-    this.armR = limb(-0.26, 0.56, this.torso, 0.32, 0.32, 0.062, jacket, jacketDark, hand());
-    this.armR.lower.add(this.handAnchor);
-    this.handAnchor.position.y = -0.38;
+  constructor(look: Partial<Appearance> = {}) {
+    this.body = new HumanBody(look);
+    this.root = this.body.root;
+    this.handAnchor = this.body.handAnchor;
   }
 
-  /** Visual update. `alpha` interpolates between the last two physics states. */
-  update(dt: number, alpha: number, pc: PlayerController): void {
-    this.time += dt;
-    const b = pc.body;
-    const x = lerp(pc.prevX, b.x, alpha);
-    const y = lerp(pc.prevY, b.y, alpha);
-    const z = lerp(pc.prevZ, b.z, alpha);
-    this.root.position.set(x, y, z);
+  // ------------------------------------------------------------------------------- triggers
 
-    this.yaw += angleDelta(this.yaw, pc.heading) * (1 - Math.exp(-12 * dt));
-    this.root.rotation.y = this.yaw;
-
-    const speed = Math.hypot(b.vx, b.vz);
-    const run = clamp((speed - 3.5) / 3.5, 0, 1);
-    const moving = clamp(speed / 3, 0, 1);
-    const airborne = !b.grounded && pc.state !== 'swim' && pc.state !== 'wade';
-    this.airW = damp(this.airW, airborne ? 1 : 0, 10, dt);
-    this.swimW = damp(this.swimW, pc.state === 'swim' ? 1 : 0, 6, dt);
-
-    // Advance gait phase by distance travelled (no foot sliding).
-    const strideLen = lerp(1.45, 2.15, run);
-    if (b.grounded || pc.state === 'swim') this.phase += (speed / strideLen) * Math.PI * dt;
-    else this.phase += dt * 2;
-    const s = Math.sin(this.phase);
-    const c = Math.cos(this.phase);
-
-    // ---- Ground pose ----
-    const swing = lerp(0.45, 0.85, run) * moving;
-    const breathe = Math.sin(this.time * 2.1) * 0.012;
-    const g = {
-      hipsY: 0.94 - Math.abs(c) * 0.05 * moving - run * 0.04 + breathe,
-      lean: 0.05 * moving + 0.18 * run,
-      legLU: s * swing,
-      legRU: -s * swing,
-      legLL: -Math.max(0, -c) * swing * 1.4 - 0.05,
-      legRL: -Math.max(0, c) * swing * 1.4 - 0.05,
-      armLU: s * swing * 0.85,
-      armRU: -s * swing * 0.85,
-      armLL: -0.25 - run * 0.9,
-      armRL: -0.25 - run * 0.9,
-      headX: -0.05 * run + Math.sin(this.time * 0.7) * 0.03 * (1 - moving),
-    };
-    // ---- Air pose ----
-    const rising = b.vy > 0 ? 1 : 0;
-    const a = {
-      hipsY: 0.94,
-      lean: 0.1,
-      legLU: 0.6 * rising + 0.25,
-      legRU: -0.2 + 0.1 * rising,
-      legLL: -1.1 * rising - 0.4,
-      legRL: -0.5,
-      armLU: -0.4 - 1.2 * rising,
-      armRU: 0.5 + 0.6 * (1 - rising),
-      armLL: -0.5,
-      armRL: -0.3,
-      headX: rising ? -0.15 : 0.12,
-    };
-    // ---- Swim pose ----
-    const sw = Math.sin(this.time * 4);
-    // Body floats horizontally at the surface (feet are ~1.3 m under water).
-    const w = {
-      hipsY: 1.2,
-      lean: 1.2,
-      legLU: sw * 0.4,
-      legRU: -sw * 0.4,
-      legLL: -0.3,
-      legRL: -0.3,
-      armLU: -2.4 + Math.sin(this.time * 3) * 0.9,
-      armRU: -2.4 + Math.sin(this.time * 3 + Math.PI) * 0.9,
-      armLL: -0.4,
-      armRL: -0.4,
-      headX: -0.9,
-    };
-    const blend = (k: keyof typeof g) => lerp(lerp(g[k], a[k], this.airW), w[k], this.swimW);
-
-    const r = 18;
-    this.landSquash = damp(this.landSquash, 0, 8, dt);
-    this.hips.position.y = damp(this.hips.position.y, blend('hipsY') - this.landSquash * 0.18, r, dt);
-    this.torso.rotation.x = damp(this.torso.rotation.x, blend('lean'), r, dt);
-    this.head.rotation.x = damp(this.head.rotation.x, blend('headX'), r * 0.6, dt);
-    this.legL.upper.rotation.x = damp(this.legL.upper.rotation.x, -blend('legLU'), r, dt);
-    this.legR.upper.rotation.x = damp(this.legR.upper.rotation.x, -blend('legRU'), r, dt);
-    this.legL.lower.rotation.x = damp(this.legL.lower.rotation.x, -blend('legLL'), r, dt);
-    this.legR.lower.rotation.x = damp(this.legR.lower.rotation.x, -blend('legRL'), r, dt);
-    this.armL.upper.rotation.x = damp(this.armL.upper.rotation.x, blend('armLU'), r, dt);
-    this.armR.upper.rotation.x = damp(this.armR.upper.rotation.x, blend('armRU'), r, dt);
-    this.armL.lower.rotation.x = damp(this.armL.lower.rotation.x, blend('armLL'), r, dt);
-    this.armR.lower.rotation.x = damp(this.armR.lower.rotation.x, blend('armRL'), r, dt);
-    this.armL.upper.rotation.z = damp(this.armL.upper.rotation.z, 0.08 + this.airW * 0.3, r, dt);
-    this.armR.upper.rotation.z = damp(this.armR.upper.rotation.z, -0.08 - this.airW * 0.3, r, dt);
-
-    // Action overlays on the right arm.
-    if (this.actionT > 0) {
-      this.actionT = Math.max(0, this.actionT - dt);
-      const t = 1 - this.actionT / this.actionDur;
-      if (this.actionKind === 'eat') {
-        this.armR.upper.rotation.x = -1.3 - Math.sin(t * Math.PI) * 0.3;
-        this.armR.lower.rotation.x = -1.7;
-        this.head.rotation.x = 0.15;
-      } else {
-        // Wind up, then strike down and forward.
-        const k = t < 0.35 ? t / 0.35 : 1 - (t - 0.35) / 0.65;
-        const raise = this.actionKind === 'swing' ? 2.7 : 2.2;
-        this.armR.upper.rotation.x = t < 0.35 ? -raise * k : -raise + (raise + 0.5) * (1 - k);
-        this.armR.lower.rotation.x = -0.3;
-        this.torso.rotation.x += t > 0.35 ? 0.15 * k : -0.1 * k;
-      }
-    } else if (this.holdingLight && this.swimW < 0.5) {
-      this.armR.upper.rotation.x = damp(this.armR.upper.rotation.x, -0.95, 10, dt);
-      this.armR.lower.rotation.x = damp(this.armR.lower.rotation.x, -0.6, 10, dt);
-    }
+  swing(kind: SwingKind = 'fist'): void {
+    this.play(kind === 'knife' ? 'slash' : kind === 'fist' ? 'punch' : 'heavySwing');
   }
 
-  /** Static seated pose (NPCs). Call update() each frame for breathing. */
-  sit(): void {
-    this.sitting = true;
-    this.hips.position.y = 0.42;
-    this.legL.upper.rotation.x = -1.45;
-    this.legR.upper.rotation.x = -1.35;
-    this.legL.lower.rotation.x = 1.5;
-    this.legR.lower.rotation.x = 1.4;
-    this.armL.upper.rotation.x = -0.7;
-    this.armR.upper.rotation.x = -0.8;
-    this.armL.lower.rotation.x = -0.9;
-    this.armR.lower.rotation.x = -0.9;
-    this.torso.rotation.x = 0.25;
-    this.head.rotation.x = 0.2;
-  }
-
-  /** Idle animation for a seated NPC. */
-  idle(dt: number): void {
-    if (!this.sitting) return;
-    this.time += dt;
-    this.torso.rotation.x = 0.25 + Math.sin(this.time * 1.6) * 0.02;
-    this.head.rotation.y = Math.sin(this.time * 0.3) * 0.25;
-  }
-
-  swing(): void {
-    this.actionKind = 'swing';
-    this.actionT = this.actionDur = 0.4;
-  }
-
-  work(): void {
-    this.actionKind = 'work';
-    this.actionT = this.actionDur = 0.42;
+  work(kind: WorkKind = 'gather'): void {
+    this.play(kind);
   }
 
   eat(): void {
-    this.actionKind = 'eat';
-    this.actionT = this.actionDur = 0.7;
+    this.play('eat');
   }
 
-  /** Called on landing to add a short squash. */
+  drink(): void {
+    this.play('drink');
+  }
+
+  hurt(amount: number): void {
+    this.hurtT = 0;
+    this.hurtK = clamp(0.4 + amount / 15, 0.4, 1);
+  }
+
+  /** Called on landing to absorb the impact in the knees. */
   land(impact: number): void {
-    this.landSquash = clamp(impact / 16, 0, 1);
+    const k = clamp((impact - 3) / 14, 0, 1);
+    if (k <= 0.05) return;
+    this.landT = 0;
+    this.landK = k;
+  }
+
+  /** Static seated pose (NPCs); call idle() each frame. */
+  sit(): void {
+    this.sitting = true;
+    this.evaluate(0, null);
+  }
+
+  /** NPC update without a driver. */
+  idle(dt: number): void {
+    if (!this.unfrozen) {
+      // Site objects get frozen transforms; this one moves.
+      this.root.traverse((o) => (o.matrixAutoUpdate = true));
+      this.unfrozen = true;
+    }
+    this.evaluate(dt, null);
+  }
+
+  private play(name: ClipName): void {
+    this.action = CLIPS[name];
+    this.actionT = 0;
+    this.fidget = null;
+    this.stillTime = 0;
+  }
+
+  // ------------------------------------------------------------------------------- per frame
+
+  /** Visual update. `alpha` interpolates between the last two physics states. */
+  update(dt: number, alpha: number, pc: CharacterDriver): void {
+    const b = pc.body;
+    this.root.position.set(lerp(pc.prevX, b.x, alpha), lerp(pc.prevY, b.y, alpha), lerp(pc.prevZ, b.z, alpha));
+    if (dt > 0) {
+      const d = angleDelta(this.yaw, pc.heading);
+      this.yaw += d * (1 - Math.exp(-12 * dt));
+      this.yawRate = damp(this.yawRate, angleDelta(this.lastHeading, pc.heading) / dt, 10, dt);
+      this.lastHeading = pc.heading;
+    }
+    this.root.rotation.y = this.yaw;
+    this.evaluate(dt, pc);
+  }
+
+  private evaluate(dt: number, pc: CharacterDriver | null): void {
+    this.time += dt;
+    const P = this.pose;
+    P.fill(0);
+
+    if (this.sitting || !pc) {
+      sample(CLIPS.sit, this.time / CLIPS.sit.duration, P);
+      this.blink(dt);
+      this.applyPose();
+      return;
+    }
+
+    const b = pc.body;
+    const speed = Math.hypot(b.vx, b.vz);
+    if (dt > 0) {
+      this.accel = damp(this.accel, (speed - this.speedPrev) / dt, 8, dt);
+      this.speedPrev = speed;
+    }
+    const swimming = pc.state === 'swim';
+    const wading = pc.state === 'wade';
+    const airborne = !b.grounded && !swimming && !wading;
+
+    // ---- Layer weights ----
+    this.moveW = damp(this.moveW, smoothstep(0.15, 1.4, speed), 10, dt);
+    this.runW = damp(this.runW, smoothstep(4.4, 6.6, speed), 6, dt);
+    this.airW = damp(this.airW, airborne ? 1 : 0, airborne ? 14 : 18, dt);
+    this.riseW = damp(this.riseW, b.vy > 1 ? 1 : 0, 8, dt);
+    this.swimW = damp(this.swimW, swimming ? 1 : 0, 6, dt);
+    this.swimMoveW = damp(this.swimMoveW, smoothstep(0.3, 1.6, speed), 4, dt);
+    this.wadeW = damp(this.wadeW, wading ? 1 : 0, 6, dt);
+    this.lightW = damp(this.lightW, this.holdingLight ? 1 : 0, 8, dt);
+    this.toolW = damp(this.toolW, this.holdingTool && !this.holdingLight ? 1 : 0, 8, dt);
+    this.coldW = damp(this.coldW, smoothstep(0.25, 0.8, this.cold), 2, dt);
+    this.tiredW = damp(this.tiredW, smoothstep(0.3, 1, this.tired), 1.5, dt);
+    if (this.dead) this.deadT += dt;
+    else this.deadT = 0;
+    this.deadW = damp(this.deadW, this.dead ? 1 : 0, this.dead ? 30 : 3, dt);
+
+    // ---- Locomotion ----
+    const cycle = lerp(1.9, 2.8, this.runW);
+    if (b.grounded || swimming || wading) this.phase += (speed / cycle) * dt;
+    sample(CLIPS.idle, this.time / CLIPS.idle.duration, P);
+    if (this.moveW > 0.001) {
+      const L = this.tmp;
+      L.fill(0);
+      sample(CLIPS.walk, this.phase, L);
+      if (this.runW > 0.001) {
+        const R = this.tmp2;
+        R.fill(0);
+        sample(CLIPS.run, this.phase, R);
+        blend(L, R, this.runW);
+      }
+      blend(P, L, this.moveW);
+    }
+
+    // ---- Idle fidgets ----
+    const calm = this.moveW < 0.05 && b.grounded && !this.action && !swimming && !wading && !this.dead;
+    this.stillTime = calm ? this.stillTime + dt : 0;
+    if (!this.fidget && this.stillTime > this.nextFidget) {
+      const options = FIDGETS.filter((f) => !(this.coldW > 0.3 && f === 'stretch') && !(this.lightW > 0.5 && f !== 'lookAround'));
+      this.fidget = CLIPS[options[Math.floor(Math.random() * options.length)]];
+      this.fidgetT = 0;
+      this.stillTime = 0;
+      this.nextFidget = 8 + Math.random() * 10;
+    }
+    if (this.fidget) {
+      this.fidgetT += dt / this.fidget.duration;
+      const w = Math.min(smoothstep(0, 0.12, this.fidgetT), 1 - smoothstep(0.85, 1, this.fidgetT)) * (calm || this.fidgetT < 0.02 ? 1 : 0);
+      if (this.fidgetT >= 1 || !calm) this.fidget = null;
+      else this.layer(this.fidget, this.fidgetT, w);
+    }
+
+    // ---- Posture overlays ----
+    if (this.coldW > 0.01) this.layer(CLIPS.cold, 0, this.coldW * (1 - this.moveW * 0.55) * (1 - this.lightW * 0.5) * (1 - this.swimW));
+    if (this.tiredW > 0.01) this.additive(CLIPS.tired, 0, this.tiredW * (1 - this.swimW));
+    if (this.wadeW > 0.01) this.layer(CLIPS.wade, 0, this.wadeW * (1 - this.lightW));
+    if (this.toolW > 0.01) this.layer(CLIPS.holdTool, 0, this.toolW);
+    if (this.lightW > 0.01) this.layer(CLIPS.holdLight, 0, this.lightW * (1 - this.swimW));
+
+    // ---- Air ----
+    if (this.airW > 0.001) {
+      const A = this.tmp;
+      A.fill(0);
+      sample(CLIPS.fall, this.time / CLIPS.fall.duration, A);
+      if (this.riseW > 0.001) {
+        const J = this.tmp2;
+        J.fill(0);
+        sample(CLIPS.jump, 0, J);
+        blend(A, J, this.riseW);
+      }
+      blend(P, A, this.airW, this.lightW > 0.5 ? FALL_KEEP_LIGHT : CLIPS.fall.mask);
+    }
+
+    // ---- Landing ----
+    if (this.landT < 1) {
+      this.landT = Math.min(1, this.landT + dt / CLIPS.land.duration);
+      this.layer(CLIPS.land, this.landT, this.landK * (1 - smoothstep(0.7, 1, this.landT)) * (1 - this.airW));
+    }
+
+    // ---- Water ----
+    if (this.swimW > 0.001) {
+      const S = this.tmp;
+      S.fill(0);
+      sample(CLIPS.tread, this.time / CLIPS.tread.duration, S);
+      const M = this.tmp2;
+      M.fill(0);
+      sample(CLIPS.swim, this.time / CLIPS.swim.duration, M);
+      blend(S, M, this.swimMoveW);
+      blend(P, S, this.swimW);
+    }
+
+    // ---- Actions ----
+    if (this.action) {
+      this.actionT += dt / this.action.duration;
+      if (this.actionT >= 1) this.action = null;
+      else {
+        const t = this.actionT;
+        this.layer(this.action, t, Math.min(1, t / 0.12) * (1 - smoothstep(0.88, 1, t)) * (1 - this.deadW));
+      }
+    }
+    if (this.hurtT < 1) {
+      this.hurtT = Math.min(1, this.hurtT + dt / CLIPS.flinch.duration);
+      this.additive(CLIPS.flinch, this.hurtT, this.hurtK);
+    }
+
+    // ---- Death ----
+    if (this.deadW > 0.001) {
+      const D = this.tmp;
+      D.fill(0);
+      sample(CLIPS.die, this.dead ? this.deadT / CLIPS.die.duration : 1, D);
+      blend(P, D, this.deadW);
+    }
+
+    // ---- Procedural layers ----
+    this.procedural(dt, pc, speed);
+    this.applyPose();
+    this.footIK(dt, pc);
+    this.blink(dt);
+  }
+
+  /** Overlay a clip's channels (absolute pose) with weight w. */
+  private layer(clip: Clip, t: number, w: number): void {
+    if (w <= 0.001) return;
+    const T = this.layerBuf;
+    T.fill(0);
+    sample(clip, t, T);
+    blend(this.pose, T, Math.min(1, w), clip.mask);
+  }
+
+  /** Add a clip's channels on top of the pose. */
+  private additive(clip: Clip, t: number, w: number): void {
+    if (w <= 0.001) return;
+    const T = this.layerBuf;
+    T.fill(0);
+    sample(clip, t, T);
+    add(this.pose, T, w, clip.mask);
+  }
+
+  private layerBuf = newPose();
+  private diffs = [0, 0];
+  private ankles = [new THREE.Vector3(), new THREE.Vector3()];
+
+  private procedural(dt: number, pc: CharacterDriver, speed: number): void {
+    const P = this.pose;
+    const grounded = pc.body.grounded && this.swimW < 0.5 && this.deadW < 0.5;
+
+    // Lean into turns (toward the inside) and with acceleration.
+    const targetLean = grounded ? clamp(-this.yawRate * speed * 0.022, -0.3, 0.3) : 0;
+    this.lean = damp(this.lean, targetLean, 6, dt);
+    P[R('hips', 2)] += this.lean * 0.6;
+    P[R('spine', 2)] += this.lean * 0.4;
+    P[R('spine', 0)] += clamp(this.accel * 0.012, -0.12, 0.12) * (grounded ? 1 : 0);
+
+    // Shiver.
+    if (this.coldW > 0.2) {
+      const s = (this.coldW - 0.2) * 0.012;
+      P[R('spine', 2)] += Math.sin(this.time * 41) * s;
+      P[R('chest', 0)] += Math.sin(this.time * 37 + 1) * s;
+      P[R('shoulderL', 2)] += Math.sin(this.time * 33) * s * 2;
+      P[R('shoulderR', 2)] -= Math.sin(this.time * 35 + 2) * s * 2;
+    }
+
+    // Head: glance at the target, or where the camera looks when standing around.
+    let wantYaw = 0;
+    let wantPitch = 0;
+    const free = !this.action && this.deadW < 0.3 && this.swimW < 0.5 && !this.fidget;
+    if (free && this.lookTarget) {
+      tmpV.copy(this.lookTarget).sub(this.root.position);
+      const yawTo = Math.atan2(tmpV.x, tmpV.z);
+      wantYaw = angleDelta(this.yaw, yawTo);
+      wantPitch = -Math.atan2(tmpV.y - 1.6, Math.hypot(tmpV.x, tmpV.z));
+      if (Math.abs(wantYaw) > 1.9) wantYaw = 0;
+    } else if (free && this.viewHeading !== null && this.moveW < 0.3) {
+      wantYaw = angleDelta(this.yaw, this.viewHeading);
+      if (Math.abs(wantYaw) > 2.2) wantYaw = 0;
+    }
+    wantYaw = clamp(wantYaw, -1.1, 1.1);
+    wantPitch = clamp(wantPitch, -0.5, 0.6);
+    this.lookYaw = damp(this.lookYaw, wantYaw, 5, dt);
+    this.lookPitch = damp(this.lookPitch, wantPitch, 5, dt);
+    P[R('neck', 1)] += this.lookYaw * 0.35;
+    P[R('head', 1)] += this.lookYaw * 0.55;
+    P[R('chest', 1)] += this.lookYaw * 0.1;
+    P[R('head', 0)] += this.lookPitch * 0.7;
+    P[R('neck', 0)] += this.lookPitch * 0.3;
+
+    // Scarf tail and backpack: springs driven by motion.
+    const hipsVy = (P[HIPS_OFFSET + 1] - this.hipsVyPrev) / Math.max(dt, 1e-3);
+    this.hipsVyPrev = P[HIPS_OFFSET + 1];
+    const swingSide = Math.sin(this.phase * Math.PI * 2) * 0.12 * this.moveW;
+    const scarfX = this.scarfX.update(clamp(-this.accel * 0.02 - (pc.body.grounded ? 0 : clamp(pc.body.vy * 0.03, -0.4, 0.4)) - this.runW * 0.08, -0.6, 0.06), dt, 70, 7);
+    const scarfZ = this.scarfZ.update(swingSide - this.lean * 0.8 + Math.sin(this.time * 1.3) * 0.03, dt, 60, 6);
+    P[R('scarf', 0)] += scarfX;
+    P[R('scarf', 2)] += scarfZ;
+    P[R('pack', 0)] += this.packX.update(clamp(-hipsVy * 0.05, -0.15, 0.15), dt, 160, 10);
+  }
+
+  private applyPose(): void {
+    const P = this.pose;
+    const bones = this.body.bones;
+    for (let i = 0; i < BONES.length; i++) {
+      bones[BONES[i]].rotation.set(P[i * 3], P[i * 3 + 1], P[i * 3 + 2]);
+    }
+    const hips = bones.hips;
+    const rest = this.body.rest.hips;
+    hips.position.set(rest.x + P[HIPS_OFFSET], rest.y + P[HIPS_OFFSET + 1] + this.pelvisDrop, rest.z + P[HIPS_OFFSET + 2]);
+  }
+
+  /** Plant the feet on uneven ground and steps: lower the pelvis, then bend each leg to reach. */
+  private footIK(dt: number, pc: CharacterDriver): void {
+    const enabled = !!this.ground && pc.body.grounded && this.swimW < 0.3 && this.deadW < 0.2 && this.airW < 0.3;
+    this.ikW = damp(this.ikW, enabled ? 1 : 0, 10, dt);
+    if (this.ikW < 0.01 || !this.ground) {
+      this.pelvisDrop = damp(this.pelvisDrop, 0, 10, dt);
+      return;
+    }
+    const bones = this.body.bones;
+    this.root.updateMatrixWorld(true);
+    const baseY = pc.body.y;
+    const oldDrop = this.pelvisDrop;
+    const diffs = this.diffs;
+    const ankles = this.ankles;
+    (['L', 'R'] as const).forEach((side, k) => {
+      const ankle = bones[`foot${side}`].getWorldPosition(ankles[k]);
+      const g = this.ground!(ankle.x, ankle.z, baseY + 0.45);
+      diffs[k] = Number.isFinite(g) ? clamp(g - baseY, -0.4, 0.4) : 0;
+    });
+    // Lower the pelvis so the lower foot can reach; the higher foot then bends more.
+    const drop = Math.min(0, diffs[0], diffs[1]);
+    this.pelvisDrop = damp(this.pelvisDrop, drop * this.ikW, 14, dt);
+    bones.hips.position.y = this.body.rest.hips.y + this.pose[HIPS_OFFSET + 1] + this.pelvisDrop;
+    this.root.updateMatrixWorld(true);
+
+    (['L', 'R'] as const).forEach((side, k) => {
+      const thigh = bones[`thigh${side}`];
+      const shin = bones[`shin${side}`];
+      const foot = bones[`foot${side}`];
+      // Target: where the clip put the ankle (without the pelvis drop), raised or lowered by
+      // the ground under that foot.
+      const target = tmpV.copy(ankles[k]);
+      target.y += diffs[k] - oldDrop;
+      bones.hips.worldToLocal(target);
+      target.sub(thigh.position);
+      const sol = solveLeg(target.y, target.z, THIGH_LEN, SHIN_LEN);
+      const w = this.ikW;
+      const oldSum = thigh.rotation.x + shin.rotation.x;
+      thigh.rotation.x = lerp(thigh.rotation.x, sol.upper, w);
+      shin.rotation.x = lerp(shin.rotation.x, sol.lower, w);
+      // Keep the foot's pitch, then tilt it to match the slope.
+      foot.rotation.x += oldSum - (thigh.rotation.x + shin.rotation.x);
+      if (this.ground) {
+        const fwdX = Math.sin(this.yaw);
+        const fwdZ = Math.cos(this.yaw);
+        const a = tmpV2.copy(ankles[k]);
+        const ahead = this.ground(a.x + fwdX * 0.15, a.z + fwdZ * 0.15, baseY + 0.45);
+        const behind = this.ground(a.x - fwdX * 0.15, a.z - fwdZ * 0.15, baseY + 0.45);
+        if (Number.isFinite(ahead) && Number.isFinite(behind) && Math.abs(ahead - behind) < 0.25) {
+          foot.rotation.x += -Math.atan2(ahead - behind, 0.3) * 0.8 * w * (1 - this.moveW * 0.5);
+        }
+      }
+    });
+  }
+
+  private blink(dt: number): void {
+    this.blinkT -= dt;
+    let s = 1;
+    if (this.blinkT < 0.12) s = 0.15;
+    if (this.blinkT < 0) this.blinkT = 2 + Math.random() * 4;
+    if (this.dead && this.deadT > 1) s = 0.1;
+    for (const e of this.body.eyes) e.scale.y = s;
   }
 }
+

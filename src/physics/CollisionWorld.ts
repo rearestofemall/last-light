@@ -99,6 +99,21 @@ export class CollisionWorld {
     return h;
   }
 
+  /**
+   * Highest walkable surface at a single point no higher than `maxY`: terrain (unless deep
+   * underground) or the top of a box (floors, steps, rocks). Used to plant feet.
+   */
+  heightBelow(x: number, z: number, maxY: number): number {
+    const t = this.terrain.heightAt3(x, z);
+    let h = maxY < t - UNDERGROUND_DEPTH || t > maxY ? -Infinity : t;
+    for (const c of this.query(x - 0.01, x + 0.01, z - 0.01, z + 0.01, this.probe)) {
+      if (c.maxY <= maxY && c.maxY > h) h = c.maxY;
+    }
+    return h;
+  }
+
+  private probe: Collider[] = [];
+
   isUnderground(x: number, z: number, y: number): boolean {
     return y < this.terrain.heightAt3(x, z) - UNDERGROUND_DEPTH;
   }

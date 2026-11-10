@@ -548,10 +548,13 @@ export function frost(ctx: SiteContext): void {
       const a = (i / 8) * Math.PI * 2;
       mesh(new THREE.DodecahedronGeometry(0.16, 0), ctx.mats.rock, fx + Math.cos(a) * 0.5, UG_Y + 0.08, -1.6 + Math.sin(a) * 0.4, ctx.group);
     }
-    const j = new PlayerModel({ jacket: 0x6a3f37, scarf: 0xd9b45a, hair: 0x6b4a2a });
+    const j = new PlayerModel({ jacket: 0x6a3f37, scarf: 0xd9b45a, hair: 0x6b4a2a, pants: 0x4a4038, pack: 0x55623f, hat: null });
     j.root.position.set(fx - 1.4, UG_Y, -2.2);
     j.root.rotation.y = 0.9;
     j.sit();
+    // A supply crate to sit on.
+    const seat = mesh(new THREE.BoxGeometry(0.5, 0.36, 0.42), ctx.mats.woodDark, 0, 0.18, -0.08, j.root);
+    seat.castShadow = true;
     j.root.userData.dynamic = true;
     ctx.group.add(j.root);
     ctx.npcs.push({ update: (dt) => j.idle(dt) });

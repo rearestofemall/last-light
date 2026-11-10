@@ -12,6 +12,7 @@ import { WEATHER_LABEL, Weather } from '../environment/Weather';
 import { WorldClock } from '../environment/WorldClock';
 import { InteractionSystem } from '../interaction/InteractionSystem';
 import { ContainerRegistry, Inventory, type ItemStack } from '../inventory/Inventory';
+import { ITEMS } from '../inventory/items';
 import { LightSystem } from '../lighting/LightSystem';
 import type { SaveData } from '../persistence/schema';
 import { SAVE_VERSION } from '../persistence/schema';
@@ -88,6 +89,7 @@ export class Session implements BackpackHost {
   };
   private mouseWorld = new THREE.Vector3();
   private raycaster = new THREE.Raycaster();
+  private lookAt = new THREE.Vector3();
   private hotbarDirty = true;
   /** Cached per-tick context, reused for the HUD. */
   tempC = 14;
@@ -131,7 +133,7 @@ export class Session implements BackpackHost {
         tool: (k) => this.actions.tool(k),
         wearTool: (s) => this.actions.wearTool(s),
         day: () => this.clock.time,
-        beginWork: () => this.actions.beginWork(),
+        beginWork: (k) => this.actions.beginWork(k),
       },
       host: {
         travel: (x, y, label) => void this.travel(x, y, label),
@@ -140,7 +142,7 @@ export class Session implements BackpackHost {
           const t = this.actions.tool(k);
           if (t) this.actions.wearTool(t);
         },
-        beginWork: () => this.actions.beginWork(),
+        beginWork: (k) => this.actions.beginWork(k),
         startEnding: () => void this.playEnding(),
         openCrafting: () => this.ui.backpack.open('craft'),
       },
@@ -180,8 +182,12 @@ export class Session implements BackpackHost {
     // Cross-system reactions
     events.on('player:jump', () => this.survival.onJump());
     events.on('player:land', (e) => {
+      this.model.land(e.impact);
       if (e.impact > 21) this.survival.damage((e.impact - 21) * 3.2, 'a bad fall');
     });
+    events.on('player:damaged', (e) => this.model.hurt(e.amount));
+    // Feet plant on terrain, floors and steps.
+    this.model.ground = (x, z, nearY) => this.world.collision.heightBelow(x, z, nearY);
     events.on('container:open', (e) => this.openContainer(e.id, e.title));
     events.on('quest:updated', (e) => events.emit('toast', { text: `New objective: ${e.text}`, kind: 'good', duration: 6 }));
     this.inventory.onChange(() => (this.hotbarDirty = true));
@@ -564,7 +570,17 @@ export class Session implements BackpackHost {
     if (!this.build.active) this.actions.update(dt, inp, precip, this.shelter > 0);
     else this.actions.update(dt, inp, precip, this.shelter > 0);
     this.model.holdingLight = this.actions.lightRadius > 0;
+    const heldDef = this.actions.held ? ITEMS[this.actions.held.id] : null;
+    this.model.holdingTool = !!heldDef?.tool;
+    const v = this.survival.vitals;
+    this.model.cold = clamp((32 - v.warmth) / 24, 0, 1);
+    this.model.tired = Math.max(clamp((25 - v.stamina) / 25, 0, 1), clamp((20 - v.energy) / 20, 0, 1) * 0.8);
+    this.model.dead = this.survival.dead;
     this.interactions.update(b.x, b.y, b.z, inp, !this.build.active);
+    const focus = this.interactions.focused;
+    if (focus) this.lookAt.set(focus.x, focus.y, focus.z ?? b.z);
+    this.model.lookTarget = focus ? this.lookAt : null;
+    this.model.viewHeading = Math.atan2(-Math.sin(this.rig.yaw), -Math.cos(this.rig.yaw));
     this.build.occlude(b.x, b.y, b.z, this.rig.camera.position.x, this.rig.camera.position.z);
 
     // World simulation

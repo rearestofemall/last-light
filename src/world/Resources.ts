@@ -86,7 +86,7 @@ export interface HarvestHost {
   wearTool(stack: ItemStack): void;
   day(): number;
   /** Plays the work animation and blocks repeated hits for a moment. Returns false if busy. */
-  beginWork(): boolean;
+  beginWork(kind?: 'chop' | 'mine' | 'gather'): boolean;
 }
 
 const SCALE0 = new THREE.Matrix4().makeScale(0, 0, 0);
@@ -282,7 +282,7 @@ export class ResourceSystem {
       h.events.emit('sfx', { name: 'denied' });
       return;
     }
-    if (!h.beginWork()) return;
+    if (!h.beginWork(def.sfx)) return;
     const tool = def.requires ? h.tool(def.requires) : def.faster ? h.tool(def.faster) : null;
     if (tool) h.wearTool(tool);
     nd.hp -= def.faster && h.tool(def.faster) ? 2 : 1;

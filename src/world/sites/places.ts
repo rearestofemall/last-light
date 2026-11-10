@@ -251,7 +251,7 @@ export function westBlockade(ctx: SiteContext, x: number): void {
         ctx.events.emit('toast', { text: 'A fresh rockslide buries the trail to Halcyon Pass. With a pickaxe, you could dig through.', kind: 'info', duration: 5 });
         return;
       }
-      if (!ctx.host.beginWork()) return;
+      if (!ctx.host.beginWork('mine')) return;
       ctx.host.wearTool('pickaxe');
       ctx.events.emit('sfx', { name: 'mine', x });
       progress++;
