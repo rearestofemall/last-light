@@ -6,7 +6,7 @@ import type { Terrain } from '../src/world/Terrain';
 /** Flat terrain stub at y = 0, with an optional step along x. */
 function flatTerrain(step?: { x: number; h: number }): Terrain {
   const heightAt3 = (x: number) => (step && x >= step.x ? step.h : 0);
-  return { heightAt3, heightAt: heightAt3, surfaceAt: () => 'grass', waterAt: () => null } as unknown as Terrain;
+  return { heightAt3, surfaceY: heightAt3, heightAt: heightAt3, surfaceAt: () => 'grass', waterAt: () => null } as unknown as Terrain;
 }
 
 const B = { minX: -100, maxX: 100, minZ: -100, maxZ: 100 };

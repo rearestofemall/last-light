@@ -111,6 +111,7 @@ export class PlayerModel {
   private ikW = 0;
   private blinkT = 2;
   private sitting = false;
+  private smoothedY: number | null = null;
   private unfrozen = false;
 
   constructor(look: Partial<Appearance> = {}) {
@@ -178,7 +179,11 @@ export class PlayerModel {
   /** Visual update. `alpha` interpolates between the last two physics states. */
   update(dt: number, alpha: number, pc: CharacterDriver): void {
     const b = pc.body;
-    this.root.position.set(lerp(pc.prevX, b.x, alpha), lerp(pc.prevY, b.y, alpha), lerp(pc.prevZ, b.z, alpha));
+    // Steps and small bumps are smoothed out of the visible height; jumps and falls are not.
+    const y = lerp(pc.prevY, b.y, alpha);
+    if (b.grounded && this.smoothedY !== null && Math.abs(y - this.smoothedY) < 0.7) this.smoothedY = damp(this.smoothedY, y, 16, dt);
+    else this.smoothedY = y;
+    this.root.position.set(lerp(pc.prevX, b.x, alpha), this.smoothedY, lerp(pc.prevZ, b.z, alpha));
     if (dt > 0) {
       const d = angleDelta(this.yaw, pc.heading);
       this.yaw += d * (1 - Math.exp(-12 * dt));
@@ -427,7 +432,7 @@ export class PlayerModel {
     }
     const bones = this.body.bones;
     this.root.updateMatrixWorld(true);
-    const baseY = pc.body.y;
+    const baseY = this.root.position.y;
     const oldDrop = this.pelvisDrop;
     const diffs = this.diffs;
     const ankles = this.ankles;

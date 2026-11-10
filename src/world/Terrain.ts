@@ -26,6 +26,8 @@ export const GORGE = { x0: 437, x1: 451 };
 export const PASS_RIDGE = { x0: -246, x1: -222, notch: 7 };
 /** Half-width of the trail band that stays level (sites are built on it). */
 export const PLANE_BAND = 4;
+/** Spacing of the rendered terrain grid (metres). Physics follows the same triangles. */
+export const TERRAIN_STEP = 2;
 
 /**
  * The terrain heightfield of a long valley running west → east.
@@ -116,6 +118,42 @@ export class Terrain {
     return k * h;
   }
 
+  private grid = new Map<number, number>();
+
+  /** Exact terrain height at a grid vertex (cached: the noise is expensive). */
+  gridHeight(i: number, j: number): number {
+    const key = i * 1048576 + j;
+    let h = this.grid.get(key);
+    if (h === undefined) {
+      if (this.grid.size > 400000) this.grid.clear();
+      h = this.heightAt3(i * TERRAIN_STEP, j * TERRAIN_STEP);
+      this.grid.set(key, h);
+    }
+    return h;
+  }
+
+  /**
+   * Height of the terrain surface as drawn: the 2 m grid split into triangles along the
+   * same diagonal as the chunk meshes. Walking on this keeps feet exactly on the visible
+   * ground and is far cheaper than evaluating the noise.
+   */
+  surfaceY(x: number, z: number): number {
+    const fx = x / TERRAIN_STEP;
+    const fz = z / TERRAIN_STEP;
+    const i = Math.floor(fx);
+    const j = Math.floor(fz);
+    const u = fx - i;
+    const v = fz - j;
+    const h10 = this.gridHeight(i + 1, j);
+    const h01 = this.gridHeight(i, j + 1);
+    if (u + v <= 1) {
+      const h00 = this.gridHeight(i, j);
+      return h00 + u * (h10 - h00) + v * (h01 - h00);
+    }
+    const h11 = this.gridHeight(i + 1, j + 1);
+    return h11 + (1 - u) * (h01 - h11) + (1 - v) * (h10 - h11);
+  }
+
   heightAt3(x: number, z: number): number {
     const az = Math.abs(z);
     // Authored cliff ridges are local landmarks near the road, not map-wide walls.
@@ -174,9 +212,9 @@ export class Terrain {
 
   /** Steepness (gradient magnitude) at a point. */
   gradientAt(x: number, z: number): number {
-    const e = 0.3;
-    const dx = (this.heightAt3(x + e, z) - this.heightAt3(x - e, z)) / (2 * e);
-    const dz = (this.heightAt3(x, z + e) - this.heightAt3(x, z - e)) / (2 * e);
+    const e = 1.0;
+    const dx = (this.surfaceY(x + e, z) - this.surfaceY(x - e, z)) / (2 * e);
+    const dz = (this.surfaceY(x, z + e) - this.surfaceY(x, z - e)) / (2 * e);
     return Math.hypot(dx, dz);
   }
 
@@ -185,12 +223,12 @@ export class Terrain {
       if (r.frozen || Math.abs(x - r.x) > r.width / 2 + r.bank + 10) continue;
       if (this.riverFactor(r, x, z) <= 0) continue;
       const surfaceY = this.riverWaterY(r);
-      const ground = this.heightAt3(x, z);
+      const ground = this.surfaceY(x, z);
       if (surfaceY > ground) return { surfaceY, depth: surfaceY - ground, river: r };
     }
     // The sea along the coast.
     if (z < -10 && regionWeight('coast', x, 60) > 0.2) {
-      const ground = this.heightAt3(x, z);
+      const ground = this.surfaceY(x, z);
       if (SEA_Y > ground) return { surfaceY: SEA_Y, depth: SEA_Y - ground, river: SEA_RIVER };
     }
     return null;

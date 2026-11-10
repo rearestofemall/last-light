@@ -33,12 +33,31 @@ export class InteractionSystem {
 
   constructor(private events: GameEventBus) {}
 
+  private near: Interactable[] = [];
+  private nearDirty = true;
+  private nearTimer = 0;
+  private nearX = 0;
+  private nearZ = 0;
+
+  private refreshNear(px: number, pz: number): void {
+    this.near.length = 0;
+    for (const it of this.items) {
+      if (it.inRange || (Math.abs(it.x - px) < it.radius + 12 && (it.z === undefined || Math.abs(it.z - pz) < it.radius + 12))) this.near.push(it);
+    }
+    this.nearDirty = false;
+    this.nearTimer = 15;
+    this.nearX = px;
+    this.nearZ = pz;
+  }
+
   add(i: Interactable): Interactable {
+    this.nearDirty = true;
     this.items.push(i);
     return i;
   }
 
   remove(i: Interactable): void {
+    this.nearDirty = true;
     const k = this.items.indexOf(i);
     if (k >= 0) this.items.splice(k, 1);
     if (this.current === i) this.setCurrent(null);
@@ -77,7 +96,10 @@ export class InteractionSystem {
     let best: Interactable | null = null;
     let bestD = Infinity;
     if (enabled) {
-      for (const it of this.items) {
+      // Only things near the player are tested; the short list is refreshed a few times a
+      // second, when the player has moved, or when something is added or removed.
+      if (this.nearDirty || --this.nearTimer <= 0 || Math.abs(px - this.nearX) > 4 || Math.abs(pz - this.nearZ) > 4) this.refreshNear(px, pz);
+      for (const it of this.near) {
         const d = this.test(it, px, py, pz);
         if (d < bestD) {
           bestD = d;

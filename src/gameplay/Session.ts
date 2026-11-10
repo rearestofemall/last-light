@@ -148,7 +148,7 @@ export class Session implements BackpackHost {
       },
     });
     this.player = new PlayerController(this.world.collision, events, SPAWN_X, 0, 1.5);
-    this.rig.ground = (x, z) => (this.isUnderground() ? -1e9 : this.world.terrain.heightAt3(x, z));
+    this.rig.ground = (x, z) => (this.isUnderground() ? -1e9 : this.world.terrain.surfaceY(x, z));
     this.wildlife = new Wildlife(this.world.collision, {
       events,
       interactions: this.interactions,
@@ -729,6 +729,7 @@ export class Session implements BackpackHost {
 
   frame(dt: number, alpha: number, paused: boolean): void {
     this.model.update(paused ? 0 : dt, alpha, this.player);
+    if (!paused) this.wildlife.render();
     if (this.hotbarDirty || this.lastSelected !== this.actions.selected) {
       this.hotbarDirty = false;
       this.lastSelected = this.actions.selected;

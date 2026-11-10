@@ -70,6 +70,10 @@ class Animal {
   phase = Math.random() * 10;
   lastYaw = 0;
   turn = 0;
+  /** Simulated time not yet shown by the animation. */
+  animDt = 0;
+  /** Spreads throttled updates across frames. */
+  readonly slot = Math.floor(Math.random() * 4);
   attackCd = 0;
   hurtFlash = 0;
   growlCd = 0;
@@ -303,7 +307,7 @@ export class Wildlife {
       }
       this.think(a, dt, px, py, pz, night);
       this.move(a, dt, px, pz);
-      this.animate(a, dt, px, pz);
+      a.animDt += dt;
     }
   }
 
@@ -460,6 +464,32 @@ export class Wildlife {
     if (b.y < -400) a.deadTime = 999;
   }
 
+  /**
+   * Pose the animals once per rendered frame (not per physics step). Distant animals update
+   * less often, and those beyond the fog are not drawn at all.
+   */
+  render(): void {
+    const px = this.host.playerX();
+    const pz = this.host.playerZ();
+    this.frame++;
+    for (const a of this.animals) {
+      const d = Math.hypot(a.body.x - px, a.body.z - pz);
+      a.model.root.visible = d < 120;
+      if (!a.model.root.visible) continue;
+      const every = d > 70 ? 4 : d > 30 ? 2 : 1;
+      if (a.animDt <= 0 || (this.frame + a.slot) % every !== 0) {
+        a.model.root.position.set(a.body.x, a.body.y, a.body.z);
+        continue;
+      }
+      this.animate(a, Math.min(a.animDt, 0.1), px, pz);
+      a.animDt = 0;
+    }
+  }
+
+  private frame = 0;
+  /** Feet only need the drawn surface height (cached grid). */
+  private groundFn = (x: number, z: number) => this.world.terrain.surfaceY(x, z);
+
   private animate(a: Animal, dt: number, px: number, pz: number): void {
     const b = a.body;
     const m = a.model;
@@ -480,7 +510,7 @@ export class Wildlife {
       speed: sp,
       state: a.state,
       turn: a.turn,
-      ground: (x, z) => this.world.groundAt(x, z, 0.05),
+      ground: this.groundFn,
       look: watching ? angleDelta(m.yaw, Math.atan2(px - b.x, pz - b.z)) : null,
       dark: this.host.darkness() > 0.4,
     });

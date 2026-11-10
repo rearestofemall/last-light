@@ -77,18 +77,30 @@ function finish(parts: THREE.BufferGeometry[]): THREE.BufferGeometry {
 const T = (g: THREE.BufferGeometry, x: number, y: number, z: number) => g.translate(x, y, z);
 const UPV = new THREE.Vector3(0, 1, 0);
 
+/**
+ * Low-detail mode for distant trees. The same random numbers are drawn either way (so a
+ * tree's LOD has the same silhouette), but segment counts drop and fine details are skipped.
+ */
+let LOW = false;
+const seg = (n: number, low: number) => (LOW ? Math.min(n, low) : n);
+/** Push a detail-only part unless building the LOD. */
+const detail = (parts: THREE.BufferGeometry[], g: THREE.BufferGeometry) => {
+  if (LOW) g.dispose();
+  else parts.push(g);
+};
+
 /** A tapered limb from `a` to `b` (radius r0 → r1). */
 function limb(a: THREE.Vector3, b: THREE.Vector3, r0: number, r1: number, sides = 5): THREE.BufferGeometry {
   const d = b.clone().sub(a);
-  const g = new THREE.CylinderGeometry(r1, r0, d.length(), sides, 1, true);
+  const g = new THREE.CylinderGeometry(r1, r0, d.length(), seg(sides, 4), 1, true);
   g.translate(0, d.length() / 2, 0);
   g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(UPV, d.normalize()));
   return g.translate(a.x, a.y, a.z);
 }
 
 /** Leaf mass: a lumpy icosahedron. */
-function blob(r: number, detail = 1): THREE.BufferGeometry {
-  return new THREE.IcosahedronGeometry(r, detail);
+function blob(r: number, d = 1): THREE.BufferGeometry {
+  return new THREE.IcosahedronGeometry(r, LOW ? 0 : d);
 }
 
 /** Slightly shift a hex colour's hue/brightness so trees of one kind differ. */
@@ -106,7 +118,7 @@ function roots(rng: Rng, parts: THREE.BufferGeometry[], r: number, color: number
   for (let i = 0; i < n; i++) {
     const a = (i / n) * Math.PI * 2 + rng.range(-0.3, 0.3);
     const tip = new THREE.Vector3(Math.cos(a) * r * 2.4, 0.02, Math.sin(a) * r * 2.4);
-    parts.push(part(limb(new THREE.Vector3(Math.cos(a) * r * 0.5, 0.35, Math.sin(a) * r * 0.5), tip, r * 0.45, r * 0.12, 4), { color, jitter: 0.03 }));
+    detail(parts, part(limb(new THREE.Vector3(Math.cos(a) * r * 0.5, 0.35, Math.sin(a) * r * 0.5), tip, r * 0.45, r * 0.12, 4), { color, jitter: 0.03 }));
   }
 }
 
@@ -126,7 +138,7 @@ export function pine(rng: Rng): THREE.BufferGeometry {
   const step = (total - trunkH) / (tiers + 1);
   for (let i = 0; i < tiers; i++) {
     const h = step * rng.range(1.7, 2.1);
-    const cone = new THREE.ConeGeometry(r, h, rng.int(7, 10), 2, true);
+    const cone = new THREE.ConeGeometry(r, h, seg(rng.int(7, 10), 6), LOW ? 1 : 2, true);
     // Droop the skirt: outer ring sags below the tier base.
     const pos = cone.attributes.position as THREE.BufferAttribute;
     for (let k = 0; k < pos.count; k++) {
@@ -200,7 +212,7 @@ export function birch(rng: Rng): THREE.BufferGeometry {
       const f = rng.range(0.05, 0.85);
       const p = base.clone().lerp(top, f);
       const band = new THREE.CylinderGeometry(0.165 - f * 0.07, 0.165 - f * 0.07, rng.range(0.04, 0.1), 6, 1, true, rng.range(0, 6), rng.range(1, 2.5));
-      parts.push(part(T(band, p.x, p.y, p.z), { color: 0x2a2724 }));
+      detail(parts, part(T(band, p.x, p.y, p.z), { color: 0x2a2724 }));
     }
     for (let i = 0; i < 4; i++) {
       const p = base.clone().lerp(top, 0.62 + i * 0.12);
@@ -226,7 +238,7 @@ export function deadTree(rng: Rng): THREE.BufferGeometry {
     parts.push(part(limb(from, to, 0.08, 0.025, 4), { color: col }));
     // A twig off each branch.
     const mid = from.clone().lerp(to, 0.6);
-    parts.push(part(limb(mid, mid.clone().add(new THREE.Vector3(rng.range(-0.5, 0.5), rng.range(0.3, 0.7), rng.range(-0.5, 0.5))), 0.03, 0.01, 3), { color: col }));
+    detail(parts, part(limb(mid, mid.clone().add(new THREE.Vector3(rng.range(-0.5, 0.5), rng.range(0.3, 0.7), rng.range(-0.5, 0.5))), 0.03, 0.01, 3), { color: col }));
   }
   return finish(parts);
 }
@@ -311,7 +323,7 @@ export function grassTuft(rng: Rng, flowers: boolean): THREE.BufferGeometry {
   ]);
   for (let i = 0; i < n; i++) {
     const h = rng.range(0.3, 0.7) * (tall ? 1.5 : 1);
-    const blade = new THREE.ConeGeometry(0.04, h, 3);
+    const blade = new THREE.ConeGeometry(0.04, h, 3, 1, true);
     blade.translate(0, h / 2, 0);
     blade.rotateZ(rng.range(-0.4, 0.4));
     blade.rotateY(rng.range(0, Math.PI * 2));
@@ -465,10 +477,10 @@ export function snowPine(rng: Rng): THREE.BufferGeometry {
   const snowy = rng.range(0.6, 0.95);
   for (let i = 0; i < tiers; i++) {
     const h = rng.range(1.8, 2.4);
-    const cone = new THREE.ConeGeometry(r, h, rng.int(7, 9), 1, false);
+    const cone = new THREE.ConeGeometry(r, h, seg(rng.int(7, 9), 6), 1, true);
     cone.rotateY(rng.range(0, Math.PI));
     parts.push(part(T(cone, 0, y + h / 2, 0), { color: tone(rng, 0x24392c, 0.01, 0.1), jitter: 0.3, vary: 0.2, shadeBottom: 0.35 }));
-    const cap = new THREE.ConeGeometry(r * snowy, h * 0.45, 8, 1, false);
+    const cap = new THREE.ConeGeometry(r * snowy, h * 0.45, seg(8, 6), 1, true);
     parts.push(part(T(cap, 0, y + h * 0.78, 0), { color: 0xeef2f6, jitter: 0.22, vary: 0.08 }));
     y += h * 0.52;
     r *= 0.75;
@@ -530,7 +542,7 @@ export function reeds(rng: Rng): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = [];
   for (let i = 0; i < rng.int(10, 14); i++) {
     const h = rng.range(0.8, 1.5);
-    const blade = new THREE.ConeGeometry(0.035, h, 3);
+    const blade = new THREE.ConeGeometry(0.035, h, 3, 1, true);
     blade.translate(0, h / 2, 0);
     blade.rotateZ(rng.range(-0.25, 0.25));
     const x = rng.range(-0.3, 0.3);
@@ -568,31 +580,48 @@ export type VegKind =
   | 'drift';
 
 /** Shared geometry variants for every vegetation kind, built once. */
+/** Tree kinds that get a low-detail twin for distant chunks. */
+export const LOD_KINDS: VegKind[] = ['pine', 'broadleaf', 'birch', 'dead', 'snowpine'];
+
+/** Shared geometry variants for every vegetation kind, built once (plus LODs for trees). */
 export class VegetationLibrary {
   readonly variants: Record<VegKind, THREE.BufferGeometry[]>;
+  /** Low-detail twins of the tree variants (same shapes, far fewer triangles). */
+  readonly lod: Partial<Record<VegKind, THREE.BufferGeometry[]>> = {};
 
   constructor(seed: number) {
-    const rng = new Rng(seed ^ 0xabcdef);
-    const many = (n: number, f: (r: Rng) => THREE.BufferGeometry) => Array.from({ length: n }, () => f(rng));
-    this.variants = {
-      pine: many(9, pine),
-      broadleaf: many(9, broadleaf),
-      birch: many(6, birch),
-      dead: many(4, deadTree),
-      bush: many(6, (r) => bush(r, false)),
-      berrybush: many(3, (r) => bush(r, true)),
-      snowpine: many(6, snowPine),
-      herb: many(3, herb),
-      sticks: many(3, sticks),
-      scrap: many(4, scrap),
-      reeds: many(3, reeds),
-      drift: many(3, snowDrift),
-      fern: many(6, fern),
-      grass: many(6, (r) => grassTuft(r, false)),
-      flowers: many(8, (r) => grassTuft(r, true)),
-      rock: many(10, (r) => rock(r)),
-      log: many(4, fallenLog),
-      stump: many(4, stump),
-    };
+    const fns: [VegKind, number, (r: Rng) => THREE.BufferGeometry][] = [
+      ['pine', 9, pine],
+      ['broadleaf', 9, broadleaf],
+      ['birch', 6, birch],
+      ['dead', 4, deadTree],
+      ['bush', 6, (r) => bush(r, false)],
+      ['berrybush', 3, (r) => bush(r, true)],
+      ['snowpine', 6, snowPine],
+      ['herb', 3, herb],
+      ['sticks', 3, sticks],
+      ['scrap', 4, scrap],
+      ['reeds', 3, reeds],
+      ['drift', 3, snowDrift],
+      ['fern', 6, fern],
+      ['grass', 6, (r) => grassTuft(r, false)],
+      ['flowers', 8, (r) => grassTuft(r, true)],
+      ['rock', 10, (r) => rock(r)],
+      ['log', 4, fallenLog],
+      ['stump', 4, stump],
+    ];
+    this.variants = {} as Record<VegKind, THREE.BufferGeometry[]>;
+    fns.forEach(([kind, n, f], ki) => {
+      const make = (v: number) => f(new Rng((seed ^ 0xabcdef) + ki * 7919 + v * 104729));
+      this.variants[kind] = Array.from({ length: n }, (_, v) => make(v));
+      if (LOD_KINDS.includes(kind)) {
+        LOW = true;
+        try {
+          this.lod[kind] = Array.from({ length: n }, (_, v) => make(v));
+        } finally {
+          LOW = false;
+        }
+      }
+    });
   }
 }

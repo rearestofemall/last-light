@@ -70,7 +70,9 @@ export class World {
     chunkRoot.name = 'chunks';
     this.root.add(chunkRoot);
     this.chunks = new ChunkManager(chunkRoot, this.builder, PLAYABLE);
+    this.chunks.enableWorker();
     this.chunks.radius = d.settings.profile.chunkRadius;
+    this.applyDetailRadii(d.settings.profile);
 
     const water = createWaterMaterial(0x2f5a5c);
     const salt = createWaterMaterial(0x2a4f60);
@@ -171,6 +173,7 @@ export class World {
   applySettings(): void {
     const p = this.d.settings.profile;
     this.chunks.radius = p.chunkRadius;
+    this.applyDetailRadii(p);
     if (p.standardMaterials !== this.standardMaterials) {
       this.standardMaterials = p.standardMaterials;
       this.chunkMaterials = createChunkMaterials(this.standardMaterials);
@@ -239,6 +242,13 @@ export class World {
       }
       for (const mesh of f.meshes) mesh.castShadow = f.opacity > 0.6;
     }
+  }
+
+  /** Weaker profiles switch trees to low detail sooner and draw ground cover less far. */
+  private applyDetailRadii(p: { chunkRadius: number; vegetationDensity: number }): void {
+    const tier = p.vegetationDensity >= 1 ? 2 : p.vegetationDensity >= 0.8 ? 1 : 0;
+    this.chunks.lodRadius = [1.2, 1.6, 2.0][tier];
+    this.chunks.groundRadius = [0.95, 1.15, 1.35][tier];
   }
 
   get loadedChunks(): number {

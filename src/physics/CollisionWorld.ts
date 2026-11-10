@@ -94,7 +94,7 @@ export class CollisionWorld {
   groundAt(x: number, z: number, r: number, feetY?: number): number {
     const t = this.terrain;
     const k = r * 0.75;
-    const h = Math.max(t.heightAt3(x, z), t.heightAt3(x - k, z), t.heightAt3(x + k, z), t.heightAt3(x, z - k), t.heightAt3(x, z + k));
+    const h = Math.max(t.surfaceY(x, z), t.surfaceY(x - k, z), t.surfaceY(x + k, z), t.surfaceY(x, z - k), t.surfaceY(x, z + k));
     if (feetY !== undefined && feetY < h - UNDERGROUND_DEPTH) return -Infinity;
     return h;
   }
@@ -104,7 +104,7 @@ export class CollisionWorld {
    * underground) or the top of a box (floors, steps, rocks). Used to plant feet.
    */
   heightBelow(x: number, z: number, maxY: number): number {
-    const t = this.terrain.heightAt3(x, z);
+    const t = this.terrain.surfaceY(x, z);
     let h = maxY < t - UNDERGROUND_DEPTH || t > maxY ? -Infinity : t;
     for (const c of this.query(x - 0.01, x + 0.01, z - 0.01, z + 0.01, this.probe)) {
       if (c.maxY <= maxY && c.maxY > h) h = c.maxY;
@@ -115,7 +115,7 @@ export class CollisionWorld {
   private probe: Collider[] = [];
 
   isUnderground(x: number, z: number, y: number): boolean {
-    return y < this.terrain.heightAt3(x, z) - UNDERGROUND_DEPTH;
+    return y < this.terrain.surfaceY(x, z) - UNDERGROUND_DEPTH;
   }
 
   /** Lowest feet height ≥ y where a body is not inside terrain or a solid box. */
