@@ -152,7 +152,41 @@ export class ChunkGenerator {
   generate(i: number, j: number, lod = false): ChunkData {
     const x0 = i * CHUNK_SIZE;
     const z0 = j * CHUNK_SIZE;
-    return { terrain: this.terrainData(x0, z0), veg: this.vegetationData(i, j, x0, z0, lod) };
+    const terrain = this.terrainData(x0, z0);
+    const veg = this.vegetationData(i, j, x0, z0, lod);
+    this.bakeOcclusion(terrain, x0, z0);
+    return { terrain, veg };
+  }
+
+  /** Objects that darken the ground around them: [x, z, radius, strength]. */
+  private occluders: [number, number, number, number][] = [];
+
+  /**
+   * Baked ambient occlusion: the ground darkens under trees, bushes, rocks and logs, so they
+   * sit in the world instead of floating on it. Free at runtime (it's in the vertex colours).
+   */
+  private bakeOcclusion(t: TerrainData, x0: number, z0: number): void {
+    const n = CHUNK_SIZE / STEP + 1;
+    const occ = new Float32Array(n * n);
+    for (const [ox, oz, r, k] of this.occluders) {
+      const a0 = Math.max(0, Math.floor((ox - r - x0) / STEP));
+      const a1 = Math.min(n - 1, Math.ceil((ox + r - x0) / STEP));
+      const b0 = Math.max(0, Math.floor((oz - r - z0) / STEP));
+      const b1 = Math.min(n - 1, Math.ceil((oz + r - z0) / STEP));
+      for (let a = a0; a <= a1; a++) {
+        for (let b = b0; b <= b1; b++) {
+          const d = Math.hypot(x0 + a * STEP - ox, z0 + b * STEP - oz) / r;
+          if (d < 1) occ[b * n + a] += (1 - d) * (1 - d) * k;
+        }
+      }
+    }
+    for (let v = 0; v < n * n; v++) {
+      if (occ[v] <= 0) continue;
+      const m = 1 - Math.min(0.42, occ[v]);
+      t.col[v * 3] *= m;
+      t.col[v * 3 + 1] *= m;
+      t.col[v * 3 + 2] *= m * 0.97;
+    }
   }
 
   private geometry(kind: VegKind, variant: number, lod: boolean) {
@@ -359,6 +393,15 @@ export class ChunkGenerator {
       const z = rz();
       if (Math.abs(z) < 2.5 || this.blocked(x, z, false)) continue;
       add('stump', x, z, rng.range(0.8, 1.2), 0.05);
+    }
+
+    this.occluders = [];
+    for (const pl of list) {
+      const k = pl.kind;
+      if (k === 'pine' || k === 'broadleaf' || k === 'birch' || k === 'snowpine') this.occluders.push([pl.x, pl.z, 3.4 * pl.scale, 0.42]);
+      else if (k === 'dead') this.occluders.push([pl.x, pl.z, 1.6 * pl.scale, 0.2]);
+      else if (k === 'bush' || k === 'berrybush') this.occluders.push([pl.x, pl.z, 1.5 * pl.scale, 0.3]);
+      else if (k === 'rock' || k === 'log' || k === 'stump') this.occluders.push([pl.x, pl.z, 1.3 * pl.scale, 0.3]);
     }
 
     // Merge everything sharing a material into one static mesh: a handful of draw calls per

@@ -42,7 +42,13 @@ export function createWaterMaterial(color = 0x2f5a5c): THREE.MeshStandardMateria
         `#include <dithering_fragment>
         float flow = sin(vWPos.z * 0.9 + uTime * 2.2 + sin(vWPos.x * 1.3 + vWPos.z * 0.2) * 2.5);
         float streak = smoothstep(0.82, 1.0, flow) * (0.5 + 0.5 * sin(vWPos.x * 3.1 + uTime));
-        gl_FragColor.rgb += vec3(0.75, 0.85, 0.85) * streak * 0.12;`,
+        gl_FragColor.rgb += vec3(0.75, 0.85, 0.85) * streak * 0.12;
+        // Fresnel: grazing views mirror the sky/horizon and turn opaque; looking down you see in.
+        float fres = pow(1.0 - clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0), 3.0);
+        #ifdef USE_FOG
+          gl_FragColor.rgb = mix(gl_FragColor.rgb, fogColor * 1.05, fres * 0.55);
+        #endif
+        gl_FragColor.a = mix(gl_FragColor.a * 0.92, 0.97, fres);`,
       );
   };
   m.customProgramCacheKey = () => 'river-water';

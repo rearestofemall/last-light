@@ -45,6 +45,15 @@ body {
   font-size: 15px;
 }
 
+/* Soft cinematic vignette over the 3D view (CSS: no GPU pass). */
+#ui::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse at 50% 46%, transparent 58%, rgba(10, 8, 6, 0.32) 100%);
+}
+
 kbd {
   display: inline-flex;
   align-items: center;
