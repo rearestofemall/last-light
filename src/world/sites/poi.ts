@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { hashSeed, Rng } from '../../core/rng';
+import { buildTent } from './tent';
 import { worldUvBox } from '../../render/textures';
 import { VALLEY_HALF } from '../Terrain';
 import { CLEARINGS, inCityBlock, PLAYABLE, regionAt, type RegionId, RIVERS, SEA_Y } from '../WorldDef';
@@ -95,14 +96,16 @@ function buildPoi(ctx: SiteContext, p: Poi, rng: Rng): void {
   const loot = lootFor(p.region, rng);
   switch (p.kind) {
     case 'camp': {
-      const tent = new THREE.Shape();
-      tent.moveTo(-1.2, 0);
-      tent.lineTo(1.2, 0);
-      tent.lineTo(0, 1.5);
-      tent.closePath();
-      const geo = new THREE.ExtrudeGeometry(tent, { depth: 2.4, bevelEnabled: false });
-      geo.translate(0, 0, -1.2);
-      mesh(geo, p.region === 'frost' ? m.white : m.cloth, -2.5, 0, -1.5, root);
+      const t = buildTent({
+        color: p.region === 'frost' ? 0xd8dcd6 : rng.pick([0x6b7a4a, 0x8a7a5a, 0xa8562e, 0x3f5a6e, 0x5f6b3a]),
+        width: rng.range(2.2, 2.7),
+        length: rng.range(2.2, 2.8),
+        height: rng.range(1.35, 1.65),
+        seed: rng.int(0, 1e6),
+      });
+      t.position.set(-2.5, 0, -1.5);
+      t.rotation.y = rng.range(-0.5, 0.5);
+      root.add(t);
       for (let i = 0; i < 8; i++) {
         const a = (i / 8) * Math.PI * 2;
         mesh(new THREE.DodecahedronGeometry(0.16, 0), m.rock, 1.2 + Math.cos(a) * 0.5, 0.08, 1 + Math.sin(a) * 0.4, root);

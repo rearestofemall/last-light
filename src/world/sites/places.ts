@@ -3,6 +3,7 @@ import { Rng } from '../../core/rng';
 import { worldUvBox } from '../../render/textures';
 import { RIVERS } from '../WorldDef';
 import { buildCabin, CABIN_FLOOR, furniture } from './cabin';
+import { buildTent } from './tent';
 import { boulder, fixedLight, FULL_Z, inspectable, lootCrate, mesh, oneway, readable, type SiteContext, signTexture, solid } from './kit';
 
 /** Where the player wakes: a cold camp with J.'s note. */
@@ -13,39 +14,12 @@ export function campsite(ctx: SiteContext, x: number): void {
   ctx.group.add(grp);
   const { mats } = ctx;
 
-  // A-frame tent behind the plane
+  // J.'s ridge tent, door toward the fire.
   const tent = new THREE.Group();
   tent.position.set(-4.0, 0, -3.4);
   tent.rotation.y = 0.12;
   grp.add(tent);
-  const tentShape = new THREE.Shape();
-  tentShape.moveTo(-1.3, 0);
-  tentShape.lineTo(1.3, 0);
-  tentShape.lineTo(0, 1.6);
-  tentShape.closePath();
-  // Triangular end faces the camera so the silhouette reads as a tent.
-  const tentGeo = new THREE.ExtrudeGeometry(tentShape, { depth: 2.6, bevelEnabled: false });
-  tentGeo.translate(0, 0, -2.6);
-  mesh(tentGeo, mats.cloth, 0, 0, 1.3, tent);
-  // Dark opening and a pegged-back flap
-  const door = new THREE.Shape();
-  door.moveTo(-0.55, 0);
-  door.lineTo(0.55, 0);
-  door.lineTo(0, 1.15);
-  door.closePath();
-  mesh(new THREE.ShapeGeometry(door), new THREE.MeshStandardMaterial({ color: 0x1b1d16, roughness: 1 }), 0, 0.01, 1.31, tent, false);
-  const flapShape = new THREE.Shape();
-  flapShape.moveTo(0, 0);
-  flapShape.lineTo(0.75, 0);
-  flapShape.lineTo(0, 1.15);
-  flapShape.closePath();
-  const flap = mesh(new THREE.ShapeGeometry(flapShape), mats.cloth, 0.55, 0.01, 1.32, tent);
-  flap.rotation.y = -0.5;
-  for (const sx of [-1, 1]) {
-    const guy = mesh(new THREE.CylinderGeometry(0.008, 0.008, 1.3, 3), mats.bone, sx * 1.6, 0.5, 1.4, tent, false);
-    guy.rotation.z = sx * 0.95;
-  }
-  mesh(new THREE.CylinderGeometry(0.03, 0.03, 1.75, 5), mats.woodDark, 0, 0.87, 1.36, tent);
+  tent.add(buildTent({ color: 0x6b7a4a, width: 2.6, length: 2.6, height: 1.6, seed: 11 }));
   // Note pinned to the front pole
   mesh(new THREE.PlaneGeometry(0.26, 0.34), mats.paper, -0.18, 1.0, 1.4, tent, false);
   readable(ctx, 'j-note-1', x - 4.0, g + 1.1, 'Note on the tent', 'Read', 1.6);

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { along, box, deform, loft, MeshKit, rigid, type SkinFn } from './MeshKit';
+import { along, box, deform, loft, MeshKit, rigid, type SkinFn, tube } from './MeshKit';
 
 /** Bone order is the pose layout (see Pose.ts). Character faces +z; its left is +x. */
 export const BONES = [
@@ -153,7 +153,7 @@ export class HumanBody {
       if (p) this.bones[p].add(b);
     }
     const geo = buildGeometry(L);
-    const material = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.86, metalness: 0 });
+    const material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.84, metalness: 0 });
     this.mesh = new THREE.SkinnedMesh(geo, material);
     this.mesh.castShadow = true;
     this.mesh.receiveShadow = true;
@@ -168,13 +168,18 @@ export class HumanBody {
     this.bones.handL.add(this.offHandAnchor);
     this.offHandAnchor.position.set(0, -0.055, 0.005);
 
-    // Eyes: dark, slightly glossy beads on the head bone.
-    const eyeMat = new THREE.MeshStandardMaterial({ color: 0x18120e, roughness: 0.3 });
+    // Eyes: whites with a dark iris, separate from the skin so they can blink.
+    const white = new THREE.MeshStandardMaterial({ color: 0xe9e2d6, roughness: 0.35 });
+    const iris = new THREE.MeshStandardMaterial({ color: 0x2a2018, roughness: 0.2 });
+    const h = JOINTS.head;
     for (const s of [1, -1]) {
-      const e = new THREE.Mesh(new THREE.BoxGeometry(0.024, 0.02, 0.012), eyeMat);
-      const h = JOINTS.head;
-      e.position.set(s * 0.04, 1.688 - h[1], 0.104 - h[2]);
+      const e = new THREE.Mesh(new THREE.SphereGeometry(0.0125, 10, 8).scale(1.25, 0.8, 0.5), white);
+      e.position.set(s * 0.04, 1.687 - h[1], 0.101 - h[2]);
+      const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.0078, 8, 6).scale(1, 1, 0.45), iris);
+      pupil.position.set(0, -0.0005, 0.005);
+      e.add(pupil);
       e.castShadow = false;
+      pupil.castShadow = false;
       this.bones.head.add(e);
       this.eyes.push(e);
     }
@@ -195,7 +200,6 @@ export class HumanBody {
 const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
 const DOWN = V(0, -1, 0);
 const UP = V(0, 1, 0);
-const FWD = V(0, 0, 1);
 const I = BONES.reduce((m, b, i) => ((m[b] = i), m), {} as Record<BoneName, number>);
 
 function buildGeometry(L: Appearance): THREE.BufferGeometry {
@@ -204,47 +208,58 @@ function buildGeometry(L: Appearance): THREE.BufferGeometry {
   const jacketLight = shadeHex(L.jacket, 1.12);
   const packDark = shadeHex(L.pack, 0.7);
   const sole = 0x1e1915;
+  const metal = 0x8a8f94;
   const lip = shadeHex(L.skin, 0.78);
+  const glove = 0x2e2a26;
+  const S = true; // smooth-shaded part
 
   // ---- Torso (jacket) ----
   const torsoSkin = along(V(0, 0, 0), UP, [[I.hips, -Infinity], [I.spine, 1.02], [I.chest, 1.19]], 0.07);
   k.add(
     loft(
       [
-        { y: 0.79, rx: 0.212, rz: 0.142, z: 0.006, n: 2.4 },
-        { y: 0.86, rx: 0.205, rz: 0.135, n: 2.4 },
-        { y: 0.98, rx: 0.19, rz: 0.125, n: 2.4 },
-        { y: 1.1, rx: 0.196, rz: 0.128, n: 2.5 },
-        { y: 1.22, rx: 0.214, rz: 0.138, z: 0.01, n: 2.6 },
-        { y: 1.33, rx: 0.212, rz: 0.13, z: 0.004, n: 2.6 },
-        { y: 1.405, rx: 0.205, rz: 0.115, n: 2.6 },
+        { y: 0.785, rx: 0.214, rz: 0.144, z: 0.006, n: 2.3 },
+        { y: 0.86, rx: 0.206, rz: 0.136, n: 2.3 },
+        { y: 0.98, rx: 0.19, rz: 0.126, n: 2.3 },
+        { y: 1.1, rx: 0.196, rz: 0.129, n: 2.4 },
+        { y: 1.22, rx: 0.214, rz: 0.139, z: 0.01, n: 2.5 },
+        { y: 1.33, rx: 0.212, rz: 0.131, z: 0.004, n: 2.5 },
+        { y: 1.405, rx: 0.203, rz: 0.116, n: 2.5 },
         { y: 1.45, rx: 0.15, rz: 0.09, n: 2.2 },
         { y: 1.475, rx: 0.075, rz: 0.068 },
       ],
-      12,
+      18,
     ),
     L.jacket,
     torsoSkin,
+    0.02,
+    S,
   );
-  // Hem band, zip, chest seam, pockets.
-  k.add(loft([{ y: 0.78, rx: 0.216, rz: 0.146, z: 0.006, n: 2.4 }, { y: 0.83, rx: 0.212, rz: 0.142, z: 0.006, n: 2.4 }], 12), jacketDark, torsoSkin);
-  k.add(box(0.014, 0.62, 0.012, 0, 1.11, 0.146), jacketDark, torsoSkin);
+  // Hem band, zip and pull, a stand-up collar, chest and hand-warmer pockets with flaps.
+  k.add(loft([{ y: 0.775, rx: 0.218, rz: 0.148, z: 0.006, n: 2.3 }, { y: 0.83, rx: 0.214, rz: 0.144, z: 0.006, n: 2.3 }], 18), jacketDark, torsoSkin, 0.02, S);
+  k.add(box(0.012, 0.64, 0.012, 0, 1.11, 0.146), jacketDark, torsoSkin);
+  k.add(box(0.016, 0.03, 0.01, 0, 1.4, 0.152), metal, torsoSkin);
+  k.add(loft([{ y: 1.44, rx: 0.1, rz: 0.088 }, { y: 1.52, rx: 0.094, rz: 0.084 }], 14, false), jacketDark, rigid(I.chest), 0.02, S);
   for (const s of [1, -1]) {
-    k.add(box(0.1, 0.075, 0.016, s * 0.1, 0.9, 0.137), jacketDark, torsoSkin);
-    k.add(box(0.1, 0.012, 0.02, s * 0.1, 0.94, 0.138), jacketLight, torsoSkin);
-    k.add(box(0.09, 0.06, 0.016, s * 0.1, 1.27, 0.146), jacketDark, torsoSkin);
+    k.add(box(0.1, 0.075, 0.016, s * 0.1, 0.9, 0.138), jacketDark, torsoSkin);
+    k.add(box(0.104, 0.022, 0.022, s * 0.1, 0.94, 0.14), jacketLight, torsoSkin);
+    k.add(box(0.085, 0.07, 0.016, s * 0.095, 1.27, 0.147), jacketDark, torsoSkin);
+    k.add(box(0.09, 0.022, 0.02, s * 0.095, 1.305, 0.149), jacketLight, torsoSkin);
+    k.add(box(0.012, 0.012, 0.012, s * 0.095, 1.296, 0.16), metal, torsoSkin);
   }
   // Rolled hood behind the neck.
   k.add(
-    deform(new THREE.TorusGeometry(0.105, 0.042, 5, 10, Math.PI * 1.15).rotateX(Math.PI / 2).rotateY(Math.PI * 0.075 + Math.PI), (v) => {
+    deform(new THREE.TorusGeometry(0.105, 0.042, 8, 14, Math.PI * 1.15).rotateX(Math.PI / 2).rotateY(Math.PI * 0.075 + Math.PI), (v) => {
       v.y += 1.475;
       v.z -= 0.01;
     }),
     jacketDark,
     rigid(I.chest),
+    0.02,
+    S,
   );
 
-  // ---- Pelvis and legs (trousers, boots) ----
+  // ---- Pelvis and legs (trousers with cargo pockets, laced boots) ----
   k.add(
     loft(
       [
@@ -253,10 +268,12 @@ function buildGeometry(L: Appearance): THREE.BufferGeometry {
         { y: 0.82, rx: 0.178, rz: 0.12, n: 2.3 },
         { y: 0.75, rx: 0.13, rz: 0.1 },
       ],
-      10,
+      14,
     ),
     L.pants,
     rigid(I.hips),
+    0.02,
+    S,
   );
   for (const s of [1, -1]) {
     const side = s > 0 ? 'L' : 'R';
@@ -270,21 +287,25 @@ function buildGeometry(L: Appearance): THREE.BufferGeometry {
       loft(
         [
           { y: 0.94, x, rx: 0.102, rz: 0.108 },
-          { y: 0.8, x, rx: 0.094, rz: 0.1, z: 0.004 },
-          { y: 0.63, x, rx: 0.081, rz: 0.087, z: 0.006 },
-          { y: 0.5, x, rx: 0.073, rz: 0.08, z: 0.01 },
+          { y: 0.8, x, rx: 0.095, rz: 0.1, z: 0.004 },
+          { y: 0.63, x, rx: 0.082, rz: 0.087, z: 0.006 },
+          { y: 0.5, x, rx: 0.074, rz: 0.08, z: 0.01 },
           { y: 0.4, x, rx: 0.069, rz: 0.075, z: 0.004 },
-          { y: 0.25, x, rx: 0.062, rz: 0.067 },
-          { y: 0.17, x, rx: 0.068, rz: 0.073 },
+          { y: 0.25, x, rx: 0.063, rz: 0.068 },
+          { y: 0.17, x, rx: 0.07, rz: 0.075 },
         ],
-        9,
+        14,
       ),
       L.pants,
       legSkin,
+      0.02,
+      S,
     );
-    // Knee patch.
-    k.add(box(0.07, 0.08, 0.012, x, 0.5, 0.088), shadeHex(L.pants, 0.82), legSkin);
-    // Boot: a shaft around the ankle and a foot block with a sloped toe.
+    // Knee patch, cargo pocket with flap on the outer thigh.
+    k.add(box(0.07, 0.08, 0.012, x, 0.5, 0.089), shadeHex(L.pants, 0.82), legSkin);
+    k.add(box(0.016, 0.12, 0.09, x + s * 0.088, 0.66, 0.005), shadeHex(L.pants, 0.88), legSkin);
+    k.add(box(0.02, 0.025, 0.094, x + s * 0.09, 0.725, 0.005), shadeHex(L.pants, 0.75), legSkin);
+    // Boot.
     const bootSkin: SkinFn = (p) => {
       if (p.y > 0.13) {
         const w = 1 - Math.min(1, Math.max(0, (p.y - 0.14) / 0.08));
@@ -296,30 +317,39 @@ function buildGeometry(L: Appearance): THREE.BufferGeometry {
     k.add(
       loft(
         [
-          { y: 0.23, x, rx: 0.069, rz: 0.074 },
-          { y: 0.15, x, rx: 0.072, rz: 0.08 },
-          { y: 0.1, x, rx: 0.07, rz: 0.08 },
+          { y: 0.235, x, rx: 0.071, rz: 0.076 },
+          { y: 0.15, x, rx: 0.073, rz: 0.081 },
+          { y: 0.1, x, rx: 0.071, rz: 0.081 },
         ],
-        9,
+        12,
       ),
       L.boots,
       bootSkin,
+      0.03,
+      S,
     );
+    k.add(loft([{ y: 0.225, x, rx: 0.077, rz: 0.082 }, { y: 0.25, x, rx: 0.075, rz: 0.08 }], 12), shadeHex(L.boots, 0.7), bootSkin, 0.02, S);
     k.add(
-      deform(box(0.118, 0.1, 0.27, x, 0.065, 0.045, [2, 2, 4]), (v) => {
+      deform(box(0.118, 0.1, 0.27, x, 0.065, 0.045, [3, 3, 6]), (v) => {
         const t = (v.z - 0.045) / 0.135;
         if (t > 0.2 && v.y > 0.06) v.y -= (t - 0.2) * 0.045;
-        if (t > 0.6) v.x = x + (v.x - x) * (1 - (t - 0.6) * 0.35);
+        if (t > 0.6) v.x = x + (v.x - x) * (1 - (t - 0.6) * 0.4);
         if (t < -0.8 && v.y > 0.06) v.z += 0.012;
+        // Round the toe.
+        if (t > 0.85) v.z -= (Math.abs(v.x - x) / 0.06) ** 2 * 0.02;
       }),
       L.boots,
       bootSkin,
+      0.03,
+      S,
     );
-    k.add(box(0.126, 0.026, 0.285, x, 0.013, 0.046), sole, bootSkin);
-    k.add(box(0.122, 0.012, 0.05, x, 0.18, 0.0), shadeHex(L.boots, 0.75), bootSkin);
+    k.add(box(0.128, 0.03, 0.29, x, 0.015, 0.046), sole, bootSkin);
+    k.add(box(0.124, 0.008, 0.06, x, 0.005, 0.15), 0x2c2620, bootSkin);
+    // Laces across the tongue.
+    for (let i = 0; i < 4; i++) k.add(box(0.06, 0.007, 0.008, x, 0.12 + i * 0.03, 0.074 - i * 0.004), 0xb8a27a, bootSkin);
   }
 
-  // ---- Arms ----
+  // ---- Arms, cuffs and gloved hands with separate fingers ----
   for (const s of [1, -1]) {
     const side = s > 0 ? 'L' : 'R';
     const x = s * SHOULDER_X;
@@ -339,120 +369,133 @@ function buildGeometry(L: Appearance): THREE.BufferGeometry {
           { y: 1.02, x, rx: 0.057, rz: 0.058 },
           { y: 0.925, x, rx: 0.06, rz: 0.061 },
         ],
-        8,
+        12,
       ),
       L.jacket,
       armSkin,
+      0.02,
+      S,
     );
-    // Elbow patch and cuff.
     k.add(box(0.06, 0.07, 0.012, x, 1.15, -0.062), jacketDark, armSkin);
-    k.add(loft([{ y: 0.935, x, rx: 0.066, rz: 0.066 }, { y: 0.895, x, rx: 0.063, rz: 0.063 }], 8), jacketDark, armSkin);
-    // Hand: palm (faces the body), thumb, and a fingers block on its own bone for gripping.
-    const handSkin: SkinFn = (p) => (p.y < 0.79 ? [fingers, 1, fingers, 0] : [hand, 1, hand, 0]);
+    k.add(loft([{ y: 0.945, x, rx: 0.067, rz: 0.067 }, { y: 0.92, x, rx: 0.069, rz: 0.069 }, { y: 0.893, x, rx: 0.064, rz: 0.064 }], 12), jacketDark, armSkin, 0.02, S);
+    const handSkin = rigid(hand);
+    const fingerSkin = rigid(fingers);
+    // Fingerless glove over the palm and back of the hand.
     k.add(
-      deform(box(0.036, 0.095, 0.08, x, 0.835, 0.005, [1, 2, 2]), (v) => {
-        if (v.y < 0.82) v.z *= 0.95;
+      deform(box(0.038, 0.085, 0.082, x, 0.84, 0.005, [2, 3, 3]), (v) => {
+        const dz = (v.z - 0.005) / 0.041;
+        v.x = x + (v.x - x) * (1 - dz * dz * 0.25);
+        if (v.y < 0.81) v.z *= 0.96;
       }),
-      L.skin,
+      glove,
       handSkin,
+      0.03,
+      S,
     );
-    k.add(
-      deform(box(0.024, 0.055, 0.026, x - s * 0.012, 0.83, 0.05), (v) => {
-        // Lean the thumb forward/inward.
-        const dy = v.y - 0.85;
-        v.z += -dy * 0.35;
-        v.x -= s * dy * 0.2;
-      }),
-      L.skin,
-      handSkin,
-    );
-    k.add(
-      deform(box(0.032, 0.08, 0.074, x, 0.75, 0.006, [1, 2, 1]), (v) => {
-        if (v.y < 0.75) v.x -= s * 0.008;
-      }),
-      L.skin,
-      handSkin,
-    );
+    k.add(loft([{ y: 0.885, x, rx: 0.026, rz: 0.044 }, { y: 0.87, x, rx: 0.027, rz: 0.046 }], 10), shadeHex(glove, 1.3), handSkin, 0.02, S);
+    // Thumb.
+    const tb = new THREE.Vector3(x - s * 0.012, 0.835, 0.04);
+    k.add(tube(tb, tb.clone().add(V(-s * 0.012, -0.045, 0.022)), [[0, 0.012], [0.6, 0.011], [1, 0.008]], 8), L.skin, handSkin, 0.02, S);
+    // Four fingers on the fingers bone (it curls them for a grip).
+    for (let f = 0; f < 4; f++) {
+      const fz = -0.026 + f * 0.0175;
+      const len = [0.06, 0.068, 0.064, 0.052][f];
+      const top = V(x, 0.8, fz);
+      k.add(tube(top, top.clone().add(V(-s * 0.004, -len, 0.002)), [[0, 0.0095], [0.5, 0.009], [0.9, 0.008], [1, 0.004]], 7), L.skin, fingerSkin, 0.02, S);
+    }
   }
 
   // ---- Neck and head ----
   const neckSkin = along(V(0, 0, 0), UP, [[I.chest, -Infinity], [I.neck, 1.48], [I.head, 1.585]], 0.03);
-  k.add(loft([{ y: 1.45, rx: 0.052, rz: 0.05 }, { y: 1.6, rx: 0.048, rz: 0.048, z: 0.008 }], 8, false), L.skin, neckSkin);
+  k.add(loft([{ y: 1.45, rx: 0.052, rz: 0.05 }, { y: 1.6, rx: 0.048, rz: 0.048, z: 0.008 }], 12, false), L.skin, neckSkin, 0.01, S);
   const H = rigid(I.head);
   const hc = V(0, 1.665, 0.012);
-  k.add(
-    deform(new THREE.SphereGeometry(0.118, 10, 8), (v) => {
+  const stubble = shadeHex(mixHex(L.skin, L.hair, 0.28), 0.95);
+  k.addPainted(
+    deform(new THREE.SphereGeometry(0.118, 18, 14), (v) => {
       v.x *= 0.92;
       v.y *= 1.08;
       if (v.y < 0) {
-        // Narrow toward the jaw and chin.
         const t = Math.min(1, -v.y / 0.12);
         v.x *= 1 - 0.3 * t ** 1.4;
         v.z += t * 0.01;
       }
-      if (v.z > 0.07) v.z = 0.07 + (v.z - 0.07) * 0.55; // flatter face
+      // Cheekbones and a slight brow ridge.
+      if (v.z > 0.05 && v.y > -0.01 && v.y < 0.04) v.x *= 1.03;
+      if (v.z > 0.07 && v.y > 0.03 && v.y < 0.05) v.z += 0.004;
+      if (v.z > 0.07) v.z = 0.07 + (v.z - 0.07) * 0.55;
       v.add(hc);
     }),
-    L.skin,
+    // Stubble along the jaw, chin and upper lip.
+    (c) => (c.y < 1.64 && c.z > -0.03 && !(c.y > 1.62 && Math.abs(c.x) > 0.07) ? stubble : L.skin),
     H,
+    0.02,
+    S,
   );
-  // Nose, ears, brows, mouth.
-  k.add(
-    deform(box(0.03, 0.05, 0.034, 0, 1.656, 0.112, [1, 2, 1]), (v) => {
-      if (v.y > 1.66) {
-        v.x *= 0.6;
-        v.z -= 0.012;
-      }
-    }),
-    L.skin,
-    H,
-  );
+  // Nose: a bridge and a rounded tip with soft nostrils.
+  k.add(new THREE.SphereGeometry(1, 10, 8).scale(0.013, 0.028, 0.016).rotateX(-0.3).translate(0, 1.664, 0.108), shadeHex(L.skin, 0.98), H, 0.01, S);
+  k.add(new THREE.SphereGeometry(1, 10, 8).scale(0.017, 0.013, 0.015).translate(0, 1.642, 0.117), shadeHex(L.skin, 0.97), H, 0.01, S);
+  for (const s of [1, -1]) k.add(new THREE.SphereGeometry(1, 8, 6).scale(0.008, 0.008, 0.009).translate(s * 0.013, 1.639, 0.111), shadeHex(L.skin, 0.94), H, 0.01, S);
   for (const s of [1, -1]) {
-    k.add(box(0.022, 0.048, 0.036, s * 0.111, 1.66, 0.0), shadeHex(L.skin, 0.94), H);
+    k.add(new THREE.SphereGeometry(0.021, 8, 6).scale(0.6, 1.25, 0.95).translate(s * 0.112, 1.662, 0.0), shadeHex(L.skin, 0.93), H, 0.01, S);
     k.add(
-      deform(box(0.042, 0.011, 0.014, s * 0.041, 1.713, 0.1), (v) => {
-        v.y += (v.x * s - 0.041) * -0.18;
+      deform(box(0.04, 0.009, 0.012, s * 0.041, 1.714, 0.101, [2, 1, 1]), (v) => {
+        v.y += (v.x * s - 0.041) * -0.2;
       }),
       L.hair,
       H,
     );
+    // Sideburns below the beanie.
+    k.add(box(0.012, 0.035, 0.03, s * 0.112, 1.69, 0.02), L.hair, H);
   }
-  k.add(box(0.042, 0.008, 0.008, 0, 1.612, 0.103), lip, H);
+  k.add(new THREE.SphereGeometry(0.02, 10, 6).scale(1.15, 0.28, 0.4).translate(0, 1.614, 0.103), lip, H, 0.01, S);
 
-  // Hair, and a knit beanie with a folded brim.
-  k.add(
-    new THREE.CylinderGeometry(0.118, 0.106, 0.07, 10, 1, true, Math.PI * 0.64, Math.PI * 0.72).translate(0, 1.68, -0.006),
-    L.hair,
-    H,
-  );
+  // Hair at the back, and a ribbed knit beanie with a folded brim.
+  k.add(new THREE.CylinderGeometry(0.118, 0.106, 0.07, 14, 1, true, Math.PI * 0.64, Math.PI * 0.72).translate(0, 1.68, -0.006), L.hair, H, 0.04, S);
   if (L.hat !== null) {
     const hatDark = shadeHex(L.hat, 0.8);
     k.add(
-      deform(new THREE.SphereGeometry(0.128, 10, 5, 0, Math.PI * 2, 0, Math.PI * 0.5), (v) => {
+      deform(new THREE.SphereGeometry(0.128, 18, 8, 0, Math.PI * 2, 0, Math.PI * 0.5), (v) => {
         v.x *= 0.96;
         v.y *= 0.98;
-        // Slight backward slouch.
+        // Knit ribs and a backward slouch.
+        const a = Math.atan2(v.z, v.x);
+        const r = 1 + Math.cos(a * 14) * 0.012 * (1 - Math.max(0, v.y) / 0.13);
+        v.x *= r;
+        v.z *= r;
         v.z -= Math.max(0, v.y) * 0.22 + 0.006;
         v.y += 1.722;
       }),
       L.hat,
       H,
+      0.02,
+      S,
     );
     k.add(
-      loft(
-        [
-          { y: 1.71, rx: 0.13, rz: 0.134, z: -0.002 },
-          { y: 1.728, rx: 0.132, rz: 0.136, z: -0.004 },
-          { y: 1.758, rx: 0.128, rz: 0.132, z: -0.008 },
-        ],
-        10,
+      deform(
+        loft(
+          [
+            { y: 1.708, rx: 0.13, rz: 0.134, z: -0.002 },
+            { y: 1.728, rx: 0.133, rz: 0.137, z: -0.004 },
+            { y: 1.76, rx: 0.129, rz: 0.133, z: -0.008 },
+          ],
+          28,
+        ),
+        (v) => {
+          const a = Math.atan2(v.z, v.x);
+          const r = 1 + Math.cos(a * 14) * 0.014;
+          v.x *= r;
+          v.z = (v.z + 0.004) * r - 0.004;
+        },
       ),
       hatDark,
       H,
+      0.02,
+      S,
     );
   } else {
     k.add(
-      deform(new THREE.SphereGeometry(0.127, 10, 6, 0, Math.PI * 2, 0, Math.PI * 0.55), (v) => {
+      deform(new THREE.SphereGeometry(0.127, 16, 8, 0, Math.PI * 2, 0, Math.PI * 0.55), (v) => {
         v.x *= 0.95;
         v.y *= 1.06;
         v.z -= 0.006;
@@ -460,27 +503,31 @@ function buildGeometry(L: Appearance): THREE.BufferGeometry {
       }),
       L.hair,
       H,
+      0.05,
+      S,
     );
     k.add(box(0.15, 0.03, 0.03, 0.01, 1.733, 0.095), L.hair, H);
   }
 
-  // ---- Scarf: two wraps, a knot, and a tail on its own swinging bone ----
+  // ---- Scarf: two wraps, a knot, and a fringed tail on its own swinging bone ----
   const scarfDark = shadeHex(L.scarf, 0.78);
   const scarfSkin = along(V(0, 0, 0), UP, [[I.chest, -Infinity], [I.neck, 1.5]], 0.03);
-  k.add(new THREE.TorusGeometry(0.084, 0.04, 6, 12).rotateX(Math.PI / 2).translate(0, 1.485, 0.006), L.scarf, scarfSkin);
-  k.add(new THREE.TorusGeometry(0.075, 0.033, 6, 12).rotateX(Math.PI / 2 - 0.25).translate(0, 1.525, 0.01), scarfDark, scarfSkin);
-  k.add(box(0.06, 0.055, 0.045, 0.045, 1.47, 0.11), L.scarf, rigid(I.chest));
+  k.add(new THREE.TorusGeometry(0.084, 0.04, 8, 18).rotateX(Math.PI / 2).translate(0, 1.485, 0.006), L.scarf, scarfSkin, 0.05, S);
+  k.add(new THREE.TorusGeometry(0.075, 0.033, 8, 18).rotateX(Math.PI / 2 - 0.25).translate(0, 1.525, 0.01), scarfDark, scarfSkin, 0.05, S);
+  k.add(new THREE.SphereGeometry(0.035, 10, 8).scale(1, 0.9, 0.75).translate(0.045, 1.47, 0.11), L.scarf, rigid(I.chest), 0.04, S);
   const tailSkin = along(V(0, 0, 0), DOWN, [[I.chest, -1.5], [I.scarf, -1.45]], 0.02);
   k.add(
-    deform(box(0.065, 0.27, 0.018, 0.055, 1.33, 0.128, [1, 3, 1]), (v) => {
+    deform(box(0.065, 0.27, 0.018, 0.055, 1.33, 0.128, [2, 6, 1]), (v) => {
       v.z += (1.47 - v.y) * 0.04;
     }),
     L.scarf,
     tailSkin,
+    0.05,
   );
-  k.add(box(0.067, 0.022, 0.02, 0.055, 1.2, 0.141), scarfDark, tailSkin);
+  for (let f = 0; f < 5; f++) k.add(box(0.008, 0.03, 0.008, 0.031 + f * 0.012, 1.183, 0.142), scarfDark, tailSkin);
+  k.add(box(0.067, 0.012, 0.02, 0.055, 1.24, 0.14), scarfDark, tailSkin);
 
-  // ---- Backpack (own bone, bounces when moving) with straps, bedroll and a mug ----
+  // ---- Backpack (own bone) with buckled straps, bedroll, mug and a water bottle ----
   const P = rigid(I.pack);
   k.add(
     loft(
@@ -490,13 +537,15 @@ function buildGeometry(L: Appearance): THREE.BufferGeometry {
         { y: 1.42, rx: 0.158, rz: 0.092, z: -0.22, n: 3 },
         { y: 1.48, rx: 0.14, rz: 0.08, z: -0.215, n: 3 },
       ],
-      10,
+      16,
     ),
     L.pack,
     P,
+    0.03,
+    S,
   );
   k.add(
-    deform(box(0.31, 0.05, 0.2, 0, 1.48, -0.22, [2, 1, 2]), (v) => {
+    deform(box(0.31, 0.05, 0.2, 0, 1.48, -0.22, [3, 1, 3]), (v) => {
       if (v.z < -0.27) v.y -= 0.05;
     }),
     packDark,
@@ -504,21 +553,34 @@ function buildGeometry(L: Appearance): THREE.BufferGeometry {
   );
   k.add(box(0.22, 0.16, 0.05, 0, 1.2, -0.325), packDark, P);
   k.add(box(0.1, 0.012, 0.052, 0, 1.27, -0.326), sole, P);
-  for (const s of [1, -1]) k.add(box(0.05, 0.15, 0.13, s * 0.172, 1.18, -0.22), packDark, P);
-  k.add(new THREE.CylinderGeometry(0.068, 0.068, 0.34, 8).rotateZ(Math.PI / 2).translate(0, 1.55, -0.235), 0x56603f, P);
-  for (const s of [1, -1]) k.add(new THREE.CylinderGeometry(0.072, 0.072, 0.022, 8).rotateZ(Math.PI / 2).translate(s * 0.1, 1.55, -0.235), sole, P);
-  k.add(new THREE.CylinderGeometry(0.036, 0.03, 0.065, 7).translate(0.13, 1.1, -0.315), 0x8a8f94, P);
+  for (const s of [1, -1]) {
+    k.add(box(0.03, 0.2, 0.012, s * 0.07, 1.37, -0.318), packDark, P);
+    k.add(box(0.036, 0.024, 0.016, s * 0.07, 1.31, -0.322), metal, P);
+    k.add(box(0.05, 0.15, 0.13, s * 0.172, 1.18, -0.22), packDark, P);
+  }
+  k.add(new THREE.CylinderGeometry(0.068, 0.068, 0.34, 14).rotateZ(Math.PI / 2).translate(0, 1.55, -0.235), 0x56603f, P, 0.03, S);
+  for (const s of [1, -1]) k.add(new THREE.CylinderGeometry(0.072, 0.072, 0.022, 14).rotateZ(Math.PI / 2).translate(s * 0.1, 1.55, -0.235), sole, P, 0.02, S);
+  k.add(new THREE.CylinderGeometry(0.036, 0.03, 0.065, 10).translate(0.13, 1.1, -0.315), metal, P, 0.02, S);
+  k.add(new THREE.TorusGeometry(0.018, 0.005, 4, 8).rotateY(Math.PI / 2).translate(0.165, 1.105, -0.315), metal, P);
+  k.add(new THREE.CylinderGeometry(0.035, 0.035, 0.17, 12).translate(-0.205, 1.2, -0.21), 0x3f6a7a, P, 0.02, S);
+  k.add(new THREE.CylinderGeometry(0.02, 0.025, 0.03, 10).translate(-0.205, 1.3, -0.21), 0x2a2a2a, P, 0.02, S);
   for (const s of [1, -1]) {
     k.add(
-      deform(box(0.045, 0.34, 0.014, s * 0.1, 1.27, 0.14, [1, 3, 1]), (v) => {
+      deform(box(0.045, 0.34, 0.014, s * 0.1, 1.27, 0.14, [1, 4, 1]), (v) => {
         v.z += (v.y - 1.27) * -0.05;
         v.x += (v.y - 1.27) * s * 0.06;
       }),
       packDark,
       rigid(I.chest),
     );
+    k.add(box(0.05, 0.03, 0.02, s * 0.112, 1.2, 0.152), metal, rigid(I.chest));
     k.add(box(0.046, 0.016, 0.24, s * 0.11, 1.452, -0.03), packDark, rigid(I.chest));
   }
-  void FWD;
+  // Sternum strap.
+  k.add(box(0.18, 0.016, 0.01, 0, 1.31, 0.155), packDark, rigid(I.chest));
   return k.build();
+}
+
+function mixHex(a: number, b: number, t: number): number {
+  return new THREE.Color(a).lerp(new THREE.Color(b), t).getHex();
 }

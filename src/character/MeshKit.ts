@@ -153,53 +153,79 @@ function hash(a: number, b: number, c: number): number {
  */
 export class MeshKit {
   private pos: number[] = [];
+  private nor: number[] = [];
   private col: number[] = [];
   private si: number[] = [];
   private sw: number[] = [];
   private v = new THREE.Vector3();
   private c = new THREE.Color();
 
-  add(geo: THREE.BufferGeometry, color: number, skin: SkinFn, shade = 0.06): void {
-    const g = geo.index ? geo.toNonIndexed() : geo;
-    const p = g.attributes.position as THREE.BufferAttribute;
-    const base = this.c.setHex(color);
-    for (let t = 0; t + 2 < p.count; t += 3) {
-      this.v.fromBufferAttribute(p, t);
-      const k = 1 + (hash(this.v.x, this.v.y, this.v.z) - 0.5) * shade;
-      for (let i = t; i < t + 3; i++) {
-        this.v.fromBufferAttribute(p, i);
-        this.pos.push(this.v.x, this.v.y, this.v.z);
-        this.col.push(base.r * k, base.g * k, base.b * k);
-        const [a, wa, b, wb] = skin(this.v);
-        this.si.push(a, b, 0, 0);
-        const sum = wa + wb || 1;
-        this.sw.push(wa / sum, wb / sum, 0, 0);
-      }
-    }
-    if (g !== geo) g.dispose();
-    geo.dispose();
+  /**
+   * Add a part in one colour. `smooth` averages normals across shared corners (rounded
+   * cloth and skin); otherwise each face keeps its own normal (crisp low-poly edges).
+   */
+  add(geo: THREE.BufferGeometry, color: number, skin: SkinFn, shade = 0.06, smooth = false): void {
+    const base = new THREE.Color(color);
+    this.append(geo, () => base, skin, shade, smooth);
   }
 
   /**
    * Like add(), but each triangle's colour comes from `paint(centroid)` — for coat
    * markings (darker saddles, pale bellies, spots) baked into one material.
    */
-  addPainted(geo: THREE.BufferGeometry, paint: (c: THREE.Vector3) => number, skin: SkinFn, shade = 0.07): void {
+  addPainted(geo: THREE.BufferGeometry, paint: (c: THREE.Vector3) => number, skin: SkinFn, shade = 0.07, smooth = false): void {
+    this.append(geo, (cen) => this.c.setHex(paint(cen)), skin, shade, smooth);
+  }
+
+  private append(geo: THREE.BufferGeometry, colour: (centroid: THREE.Vector3) => THREE.Color, skin: SkinFn, shade: number, smooth: boolean): void {
     const g = geo.index ? geo.toNonIndexed() : geo;
     const p = g.attributes.position as THREE.BufferAttribute;
+    const n = p.count;
+    // Face normals, and (for smooth parts) their sum at each shared corner position.
+    const fn = new Float32Array(n * 3);
+    const a = new THREE.Vector3();
+    const b = new THREE.Vector3();
+    const c = new THREE.Vector3();
+    const sums = smooth ? new Map<string, THREE.Vector3>() : null;
+    const key = (i: number) => `${Math.round(p.getX(i) * 1e4)},${Math.round(p.getY(i) * 1e4)},${Math.round(p.getZ(i) * 1e4)}`;
+    for (let t = 0; t + 2 < n; t += 3) {
+      a.fromBufferAttribute(p, t);
+      b.fromBufferAttribute(p, t + 1);
+      c.fromBufferAttribute(p, t + 2);
+      const f = c.clone().sub(b).cross(a.clone().sub(b));
+      const area = f.length();
+      if (area > 0) f.multiplyScalar(1 / area);
+      for (let i = t; i < t + 3; i++) {
+        fn[i * 3] = f.x;
+        fn[i * 3 + 1] = f.y;
+        fn[i * 3 + 2] = f.z;
+        if (sums) {
+          const k = key(i);
+          const acc = sums.get(k);
+          // Area-weighted so tiny slivers don't skew the corner.
+          if (acc) acc.addScaledVector(f, area);
+          else sums.set(k, f.clone().multiplyScalar(area));
+        }
+      }
+    }
     const cen = new THREE.Vector3();
-    for (let t = 0; t + 2 < p.count; t += 3) {
+    for (let t = 0; t + 2 < n; t += 3) {
       cen.set(0, 0, 0);
       for (let i = t; i < t + 3; i++) cen.add(this.v.fromBufferAttribute(p, i));
       cen.multiplyScalar(1 / 3);
-      const base = this.c.setHex(paint(cen));
+      const col = colour(cen);
       const k = 1 + (hash(cen.x, cen.y, cen.z) - 0.5) * shade;
       for (let i = t; i < t + 3; i++) {
         this.v.fromBufferAttribute(p, i);
         this.pos.push(this.v.x, this.v.y, this.v.z);
-        this.col.push(base.r * k, base.g * k, base.b * k);
-        const [a, wa, b, wb] = skin(this.v);
-        this.si.push(a, b, 0, 0);
+        if (sums) {
+          const s = sums.get(key(i))!;
+          const l = s.length() || 1;
+          this.nor.push(s.x / l, s.y / l, s.z / l);
+        } else this.nor.push(fn[i * 3], fn[i * 3 + 1], fn[i * 3 + 2]);
+        this.col.push(col.r * k, col.g * k, col.b * k);
+        const [ia, wa, ib, wb] = skin(this.v);
+        this.si.push(ia, ib, 0, 0);
         const sum = wa + wb || 1;
         this.sw.push(wa / sum, wb / sum, 0, 0);
       }
@@ -215,10 +241,10 @@ export class MeshKit {
   build(): THREE.BufferGeometry {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(this.pos, 3));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(this.nor, 3));
     g.setAttribute('color', new THREE.Float32BufferAttribute(this.col, 3));
     g.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(this.si, 4));
     g.setAttribute('skinWeight', new THREE.Float32BufferAttribute(this.sw, 4));
-    g.computeVertexNormals();
     g.computeBoundingSphere();
     return g;
   }
