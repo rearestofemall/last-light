@@ -16,9 +16,38 @@ import os
 
 os.environ.setdefault("ESCDELAY", "25")  # make the Esc key respond quickly
 
+import sys
+
+
+def _pause(msg="Press Enter to close this window..."):
+    try:
+        input(msg)
+    except (EOFError, KeyboardInterrupt):
+        pass
+
+
+try:
+    import curses
+except ImportError:  # Windows Python ships without curses - install it for the user
+    if os.name == "nt":
+        import subprocess
+        print("GreenOS needs the 'windows-curses' package. Installing it now...\n")
+        try:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "windows-curses"])
+            import curses
+        except Exception as e:
+            print(f"\nCould not install windows-curses automatically ({e}).")
+            print("Please run this yourself, then start GreenOS again:\n")
+            print("    py -m pip install windows-curses\n")
+            _pause()
+            sys.exit(1)
+    else:
+        print("Your Python has no 'curses' module. Install a Python build with curses support.")
+        _pause()
+        sys.exit(1)
+
 import ast
 import calendar
-import curses
 import datetime
 import json
 import locale
@@ -29,7 +58,10 @@ import random
 import shlex
 import time
 
-locale.setlocale(locale.LC_ALL, "")
+try:
+    locale.setlocale(locale.LC_ALL, "")
+except locale.Error:
+    pass
 
 OS_NAME = "GreenOS"
 VERSION = "1.0"
@@ -111,7 +143,13 @@ def cursor(v):
 
 def getkey(scr):
     try:
-        return scr.get_wch()
+        k = scr.get_wch()
+        if k == curses.KEY_RESIZE and hasattr(curses, "resize_term") and os.name == "nt":
+            try:
+                curses.resize_term(0, 0)  # Windows needs this after a window resize
+            except curses.error:
+                pass
+        return k
     except curses.error:
         return None
     except KeyboardInterrupt:
@@ -2016,8 +2054,31 @@ def main(scr):
 
 
 if __name__ == "__main__":
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        print(f"{OS_NAME} must be run in a real terminal window (Terminal, cmd, PowerShell),")
+        print("not inside IDLE or an editor's output panel. Open a terminal and run:")
+        print(f"\n    python {os.path.basename(__file__)}\n")
+        _pause()
+        sys.exit(1)
     try:
         curses.wrapper(main)
     except KeyboardInterrupt:
         pass
+    except Exception:
+        import traceback
+        err = traceback.format_exc()
+        log = os.path.join(os.path.expanduser("~"), "greenos_crash.log")
+        try:
+            with open(log, "w") as f:
+                f.write(err)
+        except OSError:
+            log = None
+        print(f"{OS_NAME} crashed :(  Here is the error:\n")
+        print(err)
+        if log:
+            print(f"(Also saved to {log})")
+        _pause()
+        sys.exit(1)
     print(f"{OS_NAME} has shut down. Your fake files are saved in {SAVE_FILE}")
+    if os.name == "nt":
+        _pause()

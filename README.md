@@ -23,4 +23,4 @@ Snake, Settings and About. Use arrow keys + Enter (mouse clicks work too), `F1`/
 `Esc` to close an app, `q` to log out back to the shell.
 
 The fake file system and settings are saved to `~/.greenos.json`. Your real files are never touched.
-Requires a terminal of at least 60x20 (on Windows: `pip install windows-curses`).
+Requires a terminal of at least 60x20. On Windows the `windows-curses` package is installed automatically on first run (or run `py -m pip install windows-curses`). Run it from a terminal window, not IDLE. If it ever crashes, the error stays on screen and is saved to `~/greenos_crash.log`.
