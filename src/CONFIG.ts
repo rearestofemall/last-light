@@ -37,6 +37,29 @@ export const CONFIG = {
     },
     missingScrewQualityPenalty: 4,
     mistakeQualityPenalty: 8,
+    // added
+    punctureChance: 0.3, // prying a glued battery with no heat / no IPA
+    foldableCrackMult: 2,
+    noAdhesivePenalty: 6,
+    strippedPenalty: 5,
+    unknownPartPenalty: 4,
+    toolTierQualityBonus: 4, // per tier above 1
+    skillQualityWeight: 0.15,
+    heatMax: 100,
+    overheatDamage: 92, // heat above this can damage OLED / battery
+    portCleanSuccess: 0.85,
+    glassOnlySuccess: [0.6, 0.85, 0.95], // by laminator/separator tier
+    flashMinutesBase: 25,
+  },
+
+  // ---------------- Diagnostics ----------------
+  diag: {
+    multimeterNoise: [0.03, 0.006, 0.002], // by tier
+    microscopeFakeReveal: [0.35, 0.7, 0.97],
+    scaleFakeReveal: 0.6,
+    thermalMinutes: 3,
+    diagComputerMinutes: [6, 3],
+    testSuiteMinutes: 5,
   },
 
   // ---------------- Microsoldering ----------------
@@ -67,12 +90,41 @@ export const CONFIG = {
   // ---------------- Customers ----------------
   customers: {
     baseArrivalsPerHour: 0.9,
-    patienceMinutes: [45, 160],
+    patienceMinutes: [100, 260],
     warrantyDays: 30,
     reviewWeight: 1.2,
     acceptQuoteSlack: 0.15, // customer accepts up to budget*(1+slack)
     bargainRounds: 3,
     sameDayBonus: 0.35,
+    // added
+    deadlineDays: [1, 4],
+    scammerChance: 0.05,
+    repeatChance: 0.25,
+    hiddenExtraFaultChance: 0.35,
+    maxQueue: 6,
+    pickupDelayMinutes: [30, 240],
+    lateDayPenalty: 0.15, // satisfaction per day late
+    mailInShipping: 600,
+    mailInPerDay: 0.6, // expected mail-in requests per day once researched
+    businessContractChance: 0.25, // per week
+    upsellAcceptBase: 0.55,
+  },
+
+  // ---------------- Market / refurbishing ----------------
+  market: {
+    walkInSellersPerDay: [1, 3],
+    auctionsPerDay: [0, 2],
+    wholesaleLotChance: 0.3,
+    listingDays: 3,
+    sellChancePerDay: 0.35, // at fair price
+    priceElasticity: 3,
+    stolenChance: 0.06,
+    lockedChance: 0.08,
+    nonPtaChance: 0.25,
+    inspectMinutes: 10,
+    recyclerPricePerPhone: 400,
+    partResaleMult: 0.65,
+    showcaseBonus: 0.4,
   },
 
   // ---------------- Pricing ----------------
@@ -108,6 +160,13 @@ export const CONFIG = {
     dishonestSwapChancePerDay: 0.08,
     walkSpeedTilesPerSec: 3,
     baseRepairMinutes: 90,
+    // added
+    candidates: 4,
+    hireFeeDays: 3, // signing cost = salary * days
+    specializationBonus: 20, // skill bonus when a job matches a specialization
+    xpPerRepair: 1.2,
+    moraleRaiseOnRaise: 15,
+    stealCatchChanceCctv: 0.6,
   },
 
   // ---------------- Reputation / progression ----------------
@@ -131,6 +190,32 @@ export const CONFIG = {
   // ---------------- Events ----------------
   events: {
     dailyChance: 0.45,
+    loadsheddingHours: [2, 5],
+    priceSpikeDays: 5,
+    demandSurgeDays: 4,
+    surgeMult: 1.6,
+    viralRep: 6,
+    theftLossFraction: 0.15,
+  },
+
+  // ---------------- Late game ----------------
+  lategame: {
+    branchOpenCost: 3_000_000,
+    branchDailyBase: 9_000,
+    franchiseFee: 2_500_000,
+    franchiseRoyaltyPerDay: 6_000,
+    manufacturingSetup: 5_000_000,
+    unitCost: { budget: 14_000, mid: 38_000, flagship: 95_000 },
+    designQuality: { budget: 55, mid: 70, flagship: 85 },
+    unitsPerBatch: 500,
+  },
+
+  // ---------------- Challenge mode ----------------
+  challenge: {
+    puzzleMinutes: 240,
+    scorePerPuzzle: 1000,
+    timeBonusPerMinute: 4,
+    mistakePenalty: 150,
   },
 
   // ---------------- Modes ----------------
@@ -142,6 +227,13 @@ export const CONFIG = {
       patienceMult: 0.7,
       cashMult: 0.6,
     },
+    tycoon: { startEmployees: 2, cashMult: 2.5 },
+  },
+
+  // ---------------- Shop floor ----------------
+  shop: {
+    tile: 40, // pixels per tile on the shop floor view
+    sellBackFraction: 0.5,
   },
 };
 
