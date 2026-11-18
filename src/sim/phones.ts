@@ -32,11 +32,13 @@ export function modelNodes(model: PhoneModelDef): NodeDef[] {
     let [x, y, z] = n.pos;
     if (model.mirror) x = -x;
     if (model.batteryShift && (n.slot === 'battery' || n.id === 'c_batt')) y += model.batteryShift;
-    const big = n.kind === 'cover' || n.slot === 'display' || n.slot === 'innerDisplay';
+    // large parts scale with the phone body; small ones (screws, connectors, cameras) keep their size
+    const big = n.kind === 'cover' || n.kind === 'bracket' || ['display', 'innerDisplay', 'battery', 'battery2', 'board', 'subBoard', 'loudspeaker', 'hinge', 'bridgeFlex', 'antenna'].includes(n.slot as string);
+    const zs = n.kind === 'screw' || n.shape === 'cyl' ? 1 : Math.min(1, sz);
     return {
       ...n,
       pos: [x * sx, y * sy, z * sz] as [number, number, number],
-      size: big ? ([n.size[0] * sx, n.size[1] * sy, n.size[2]] as [number, number, number]) : n.size,
+      size: big ? ([n.size[0] * sx, n.size[1] * sy, n.size[2] * zs] as [number, number, number]) : ([n.size[0], n.size[1], n.size[2] * zs] as [number, number, number]),
       requires: (n.requires ?? []).filter((r) => ids.has(r)),
       tetheredBy: (n.tetheredBy ?? []).filter((r) => ids.has(r)),
     };

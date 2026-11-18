@@ -173,9 +173,20 @@ export class Workstation {
       return o;
     };
     const cands = hits.map((h) => resolve(h.object)).filter(Boolean) as THREE.Object3D[];
+    const ok = (o: THREE.Object3D) => this.highlight(o.userData.node, !!o.userData.ghost) === 'ok';
+    // Strict depth order: only ghosts in front of the first solid part can win.
+    const uniq = [...new Set(cands)];
+    const si = uniq.findIndex((o) => !o.userData.ghost);
+    const solid = si >= 0 ? uniq[si] : undefined;
+    const front = (si >= 0 ? uniq.slice(0, si) : uniq).filter((o) => o.userData.ghost);
     let chosen: THREE.Object3D | undefined;
-    if (this.ghostMode) chosen = cands.find((o) => o.userData.ghost);
-    if (!chosen) chosen = cands.find((o) => !o.userData.ghost);
+    if (this.ghostMode) {
+      // reassembly goes inside-out: the deepest actionable ghost is the one to place next
+      const act = front.filter((o) => ok(o));
+      chosen = act[act.length - 1];
+      if (!chosen && solid && ok(solid)) chosen = solid;
+    }
+    if (!chosen) chosen = solid ?? (this.ghostMode ? front[0] : undefined);
     if (!chosen) return null;
     const node = chosen.userData.node as NodeDef;
     return { node, ghost: !!chosen.userData.ghost, x: e.clientX - r.left, y: e.clientY - r.top };
@@ -249,7 +260,7 @@ export class Workstation {
       color = SCREW_COLORS[n.screw!.type];
       mat.color.set(color);
       mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.85 * S, 0.85 * S, 0.6 * S, 12), mat);
-      const edge = Math.abs(y) > 70 && Math.abs(z) < 1;
+      const edge = Math.abs(y) > phoneById(phone.modelId).dims[1] / 2 - 1.5 && Math.abs(z) < 1;
       if (!edge) mesh.rotation.x = Math.PI / 2;
       // slot mark
       const mark = new THREE.Mesh(new THREE.BoxGeometry(1.2 * S, 0.25 * S, 0.62 * S), new THREE.MeshStandardMaterial({ color: '#222' }));
@@ -302,18 +313,20 @@ export class Workstation {
   private decorateBoard(mesh: THREE.Mesh, w: number, h: number, d: number) {
     const chipMat = new THREE.MeshStandardMaterial({ color: '#202225', roughness: 0.4 });
     const shieldMat = new THREE.MeshStandardMaterial({ color: '#b8bcc4', metalness: 0.9, roughness: 0.35 });
-    const add = (cw: number, ch: number, cx: number, cy: number, m = chipMat, dz = 0.6) => {
+    const add = (cw: number, ch: number, cx: number, cy: number, m = chipMat, dz = 0.3) => {
       const c = new THREE.Mesh(new THREE.BoxGeometry(cw * S, ch * S, dz * S), m);
+      c.raycast = () => {}; // decoration only: never steals clicks
       c.position.set(cx * S, cy * S, -(d / 2 + dz / 2) * S);
       mesh.add(c);
       const c2 = c.clone();
+      c2.raycast = () => {};
       c2.position.z = (d / 2 + dz / 2) * S;
       mesh.add(c2);
     };
-    add(w * 0.5, h * 0.35, -w * 0.1, h * 0.15, shieldMat, 0.8);
+    add(w * 0.5, h * 0.35, -w * 0.1, h * 0.15, shieldMat, 0.35);
     add(w * 0.25, h * 0.2, w * 0.28, -h * 0.25);
     add(w * 0.15, h * 0.12, -w * 0.3, -h * 0.3);
-    for (let i = 0; i < 10; i++) add(1.2, 0.6, (Math.random() - 0.5) * w * 0.85, (Math.random() - 0.5) * h * 0.85, chipMat, 0.4);
+    for (let i = 0; i < 10; i++) add(1.2, 0.6, (Math.random() - 0.5) * w * 0.85, (Math.random() - 0.5) * h * 0.85, chipMat, 0.25);
   }
 
   private decorateBattery(mesh: THREE.Mesh, w: number, h: number, d: number) {

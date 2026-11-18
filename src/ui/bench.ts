@@ -71,14 +71,14 @@ export function benchElement(): HTMLElement {
     const a = describeAction(c, pi.node, g().bench.tool as BenchTool);
     const s = p.nodes[pi.node.id]?.s ?? 'in';
     const comp = pi.node.slot ? p.components[pi.node.slot] ?? p.loose[pi.node.slot] : undefined;
-    tip.replaceChildren(
+    tip.replaceChildren(...[
       h('b', null, pi.node.label),
       pi.node.screw ? h('div', { class: 'mono' }, `${pi.node.screw.type} · hole ${pi.node.screw.length}mm${p.nodes[pi.node.id]?.len ? ` · fitted ${p.nodes[pi.node.id]!.len}mm` : ''}`) : null,
       h('div', { class: 'muted small' }, s === 'in' ? (pi.node.kind === 'connector' ? 'connected' : 'installed') : s === 'open' ? 'opened' : pi.node.kind === 'connector' ? 'disconnected' : 'removed'),
       comp ? h('div', { class: 'small' }, `${comp.grade}${comp.pairedTo && comp.pairedTo !== p.serial ? ' · unpaired' : ''} · ${Math.round(comp.condition)}%`) : null,
       p.heat[pi.node.id] ? h('div', { class: 'small warn' }, `Adhesive softness ${Math.round(Math.min(100, p.heat[pi.node.id]))}%`) : null,
       h('div', { class: `verb ${a.ok ? 'ok' : 'no'}` }, a.ok ? `▶ ${a.verb}` : a.reason ?? a.verb),
-    );
+    ].filter(Boolean) as HTMLElement[]);
     tip.style.display = 'block';
     tip.style.left = `${Math.min(pi.x + 16, view.clientWidth - 290)}px`;
     tip.style.top = `${pi.y + 16}px`;
@@ -330,6 +330,7 @@ export function renderSide() {
       Object.keys(p.loose).length
         ? Object.entries(p.loose).map(([slot, comp]) => comp && h('div', { class: 'tray-item' },
             h('span', { class: 'spacer' }, SLOT_NAMES[slot as Slot], h('span', { class: 'muted small' }, ` · ${comp.grade} · ${Math.round(comp.condition)}%`)),
+            btn('Install', () => { const n = c.nodes.find((x) => x.slot === slot); if (n) { setTool('tweezers'); const a = describeAction(c, n, 'tweezers'); if (a.ok) choosePart(n, slot as Slot); else toast(a.reason ?? 'Not yet.', 'warn'); } }, 'small', false, 'Put this (or a replacement) back in'),
             btn('🔍', () => inspectTray(comp), 'small', false, 'Inspect for counterfeit'),
             slot === 'display' ? btn('Glass-only', () => glassOnly(comp), 'small', false, 'Separate cracked glass + laminate new glass') : null,
             slot === 'board' ? btn('Microscope', openMicro, 'small') : null))
@@ -567,3 +568,6 @@ function submitChallenge() {
   [{ label: 'Continue', onClick: () => {} }]);
   syncBench();
 }
+
+/** Debug/test access to the 3D workstation. */
+export const _workstation = () => ws;

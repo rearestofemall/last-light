@@ -115,7 +115,7 @@ export function renderFinance(el: HTMLElement) {
       chart(data)),
     h('div', { class: 'grid2', style: 'margin-top:12px' },
       h('div', { class: 'card' }, h('h3', null, 'Where the money comes from / goes'),
-        h('table', { class: 'tbl small' }, Object.entries(totals).sort((a, b) => b[1] - a[1]).map(([k, v]) => h('tr', null, h('td', null, CAT_NAMES[k] ?? k), h('td', { class: `num ${v >= 0 ? 'good' : 'bad'}` }, money(v)))))),
+        h('table', { class: 'tbl small' }, Object.entries(totals).filter(([, v]) => Math.round(v) !== 0).sort((a, b) => b[1] - a[1]).map(([k, v]) => h('tr', null, h('td', null, CAT_NAMES[k] ?? k), h('td', { class: `num ${v >= 0 ? 'good' : 'bad'}` }, money(v)))))),
       h('div', { class: 'card' }, h('h3', null, 'Loans'),
         g.loans.length ? h('table', { class: 'tbl small' }, g.loans.map((l) => h('tr', null, h('td', null, money(l.remaining)), h('td', null, `${(l.rate * 100).toFixed(2)}%/day`), h('td', null, `${l.daysLeft} days`), h('td', null, btn('Repay', () => { repayLoan(l.id); changed(); }, 'small'))))) : h('p', { class: 'muted small' }, 'No loans.'),
         h('div', { class: 'row' }, CONFIG.economy.loanOptions.map((o, i) => btn(`Borrow ${money(o.amount)} (${o.days}d)`, () => { takeLoan(i); changed(); }, 'small'))),
